@@ -1,0 +1,39 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: radial-gradient(circle at 20% 20%, #1a2440 0%, #06080f 55%, #020307 100%);
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #e8ecf2;
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+#overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 16px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.7) 0%, rgba(0, 0, 0, 0.15) 75%, rgba(0, 0, 0, 0) 100%);
+  z-index: 10;
+}
+
+#overlay h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+#metrics {
+  margin-top: 8px;
+  font-size: 14px;
+  white-space: pre;
+  opacity: 0.95;
+}

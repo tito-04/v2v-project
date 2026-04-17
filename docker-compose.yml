@@ -1,0 +1,179 @@
+services:
+  main-broker:
+    image: eclipse-mosquitto:2
+    container_name: main-broker
+    restart: unless-stopped
+    volumes:
+      - ./vanetza_config/mosquitto/main.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - mgmt_network
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health/main -m ok >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 4s
+      retries: 5
+
+  lead-broker:
+    image: eclipse-mosquitto:2
+    container_name: lead-broker
+    restart: unless-stopped
+    volumes:
+      - ./vanetza_config/mosquitto/lead.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - mgmt_network
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health/lead -m ok >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 4s
+      retries: 5
+
+  ego-broker:
+    image: eclipse-mosquitto:2
+    container_name: ego-broker
+    restart: unless-stopped
+    volumes:
+      - ./vanetza_config/mosquitto/ego.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - mgmt_network
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health/ego -m ok >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 4s
+      retries: 5
+
+  lead-vanetza:
+    image: ghcr.io/nap-it/vanetza-nap:latest
+    container_name: lead-vanetza
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VANETZA_STATION_ID=${LEAD_STATION_ID:-101}
+      - VANETZA_STATION_TYPE=5
+      - VANETZA_MAC_ADDRESS=6e:06:e0:03:00:65
+      - VANETZA_INTERFACE=br0
+      - VANETZA_USE_HARDCODED_GPS=true
+      - VANETZA_LATITUDE=${LEAD_LATITUDE:-40.628300}
+      - VANETZA_LONGITUDE=${LEAD_LONGITUDE:--8.654400}
+      - VANETZA_LOCAL_MQTT_BROKER=${LEAD_BROKER_HOST:-lead-broker}
+      - VANETZA_LOCAL_MQTT_PORT=${LEAD_BROKER_PORT:-1883}
+      - VANETZA_REMOTE_MQTT_PORT=0
+      - START_EMBEDDED_MOSQUITTO=false
+      - SUPPORT_MAC_BLOCKING=true
+      - VANETZA_CAM_ENABLED=true
+      - VANETZA_CAM_PERIODICITY=0
+      - VANETZA_CAM_TOPIC_IN=${CAM_IN_TOPIC:-vanetza/in/cam}
+      - VANETZA_CAM_TOPIC_OUT=${CAM_OUT_TOPIC:-vanetza/out/cam}
+    depends_on:
+      lead-broker:
+        condition: service_healthy
+    networks:
+      - mgmt_network
+      - v2v_adhoc
+
+  ego-vanetza:
+    image: ghcr.io/nap-it/vanetza-nap:latest
+    container_name: ego-vanetza
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VANETZA_STATION_ID=${EGO_STATION_ID:-102}
+      - VANETZA_STATION_TYPE=5
+      - VANETZA_MAC_ADDRESS=6e:06:e0:03:00:66
+      - VANETZA_INTERFACE=br0
+      - VANETZA_USE_HARDCODED_GPS=true
+      - VANETZA_LATITUDE=${EGO_LATITUDE:-40.628250}
+      - VANETZA_LONGITUDE=${EGO_LONGITUDE:--8.654700}
+      - VANETZA_LOCAL_MQTT_BROKER=${EGO_BROKER_HOST:-ego-broker}
+      - VANETZA_LOCAL_MQTT_PORT=${EGO_BROKER_PORT:-1883}
+      - VANETZA_REMOTE_MQTT_PORT=0
+      - START_EMBEDDED_MOSQUITTO=false
+      - SUPPORT_MAC_BLOCKING=true
+      - VANETZA_CAM_ENABLED=true
+      - VANETZA_CAM_PERIODICITY=0
+      - VANETZA_CAM_TOPIC_IN=${CAM_IN_TOPIC:-vanetza/in/cam}
+      - VANETZA_CAM_TOPIC_OUT=${CAM_OUT_TOPIC:-vanetza/out/cam}
+    depends_on:
+      ego-broker:
+        condition: service_healthy
+    networks:
+      - mgmt_network
+      - v2v_adhoc
+
+  world-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: world-generator
+    restart: unless-stopped
+    command: ["python", "-u", "world_generator/main.py"]
+    environment:
+      - MAIN_BROKER_HOST=${MAIN_BROKER_HOST:-main-broker}
+      - MAIN_BROKER_PORT=${MAIN_BROKER_PORT:-1883}
+      - WORLD_TOPIC_LEAD=${WORLD_TOPIC_LEAD:-world/pos/lead}
+      - WORLD_TOPIC_EGO=${WORLD_TOPIC_EGO:-world/pos/ego}
+      - WORLD_TICK_SECONDS=${WORLD_TICK_SECONDS:-1.0}
+      - LEAD_START_X=${LEAD_START_X:-50.0}
+      - EGO_START_X=${EGO_START_X:-20.0}
+      - X_STEP_METERS=${X_STEP_METERS:-2.0}
+    depends_on:
+      main-broker:
+        condition: service_healthy
+    networks:
+      - mgmt_network
+
+  vehicle-lead:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: vehicle-lead
+    restart: unless-stopped
+    command: ["python", "-u", "vehicle_lead/main.py"]
+    environment:
+      - MAIN_BROKER_HOST=${MAIN_BROKER_HOST:-main-broker}
+      - MAIN_BROKER_PORT=${MAIN_BROKER_PORT:-1883}
+      - LEAD_BROKER_HOST=${LEAD_BROKER_HOST:-lead-broker}
+      - LEAD_BROKER_PORT=${LEAD_BROKER_PORT:-1883}
+      - WORLD_TOPIC_LEAD=${WORLD_TOPIC_LEAD:-world/pos/lead}
+      - CAM_IN_TOPIC=${CAM_IN_TOPIC:-vanetza/in/cam}
+      - LEAD_LATITUDE=${LEAD_LATITUDE:-40.628300}
+      - LEAD_LONGITUDE=${LEAD_LONGITUDE:--8.654400}
+    depends_on:
+      main-broker:
+        condition: service_healthy
+      lead-broker:
+        condition: service_healthy
+    networks:
+      - mgmt_network
+
+  vehicle-ego:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: vehicle-ego
+    restart: unless-stopped
+    command: ["python", "-u", "vehicle_ego/main.py"]
+    environment:
+      - MAIN_BROKER_HOST=${MAIN_BROKER_HOST:-main-broker}
+      - MAIN_BROKER_PORT=${MAIN_BROKER_PORT:-1883}
+      - EGO_BROKER_HOST=${EGO_BROKER_HOST:-ego-broker}
+      - EGO_BROKER_PORT=${EGO_BROKER_PORT:-1883}
+      - WORLD_TOPIC_EGO=${WORLD_TOPIC_EGO:-world/pos/ego}
+      - CAM_OUT_TOPIC=${CAM_OUT_TOPIC:-vanetza/out/cam}
+      - UI_PORT=8080
+    depends_on:
+      main-broker:
+        condition: service_healthy
+      ego-broker:
+        condition: service_healthy
+    ports:
+      - "${UI_HOST_PORT:-8080}:8080"
+    networks:
+      - mgmt_network
+
+networks:
+  mgmt_network:
+    driver: bridge
+  v2v_adhoc:
+    driver: bridge

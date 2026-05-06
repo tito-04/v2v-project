@@ -1,3 +1,6 @@
+import * as THREE from "./vendor/three.module.js";
+import { STLLoader } from "./vendor/stl-loader.js";
+
 let current = {
   egoX: 20,
   leadX: 50,
@@ -64,11 +67,6 @@ function startFallbackUi(reason) {
 }
 
 function init3d() {
-  if (typeof THREE === "undefined") {
-    startFallbackUi("Three.js failed to load");
-    return;
-  }
-
   let renderer;
   try {
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -101,23 +99,23 @@ function init3d() {
 
   const laneLine = new THREE.Mesh(
     new THREE.PlaneGeometry(3000, 2),
-    new THREE.MeshStandardMaterial({ color: 0xd4b83d, roughness: 0.7, metalness: 0.1 })
+    new THREE.MeshStandardMaterial({
+      map: createDashTexture(),
+      transparent: true,
+      roughness: 0.7,
+      metalness: 0.1,
+    })
   );
   laneLine.rotation.x = -Math.PI / 2;
   laneLine.position.y = 0.02;
   scene.add(laneLine);
 
-  function buildVehicle(color) {
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(12, 4, 6),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.25 })
-    );
-    body.position.y = 2.0;
-    return body;
-  }
+  const laneOffsetZ = 20;
 
-  const egoCar = buildVehicle(0x2ec4b6);
-  const leadCar = buildVehicle(0xff9f1c);
+  addRoadsideTrees(scene);
+
+  let egoCar = buildVehicle(0x2ec4b6);
+  let leadCar = buildVehicle(0xff9f1c);
   scene.add(egoCar);
   scene.add(leadCar);
 
@@ -126,11 +124,24 @@ function init3d() {
 
   connectStateSource();
 
+  loadVehicleModel((geometry) => {
+    const nextEgo = buildVehicle(0x2ec4b6, geometry);
+    const nextLead = buildVehicle(0xff9f1c, geometry);
+    scene.add(nextEgo);
+    scene.add(nextLead);
+    scene.remove(egoCar);
+    scene.remove(leadCar);
+    egoCar = nextEgo;
+    leadCar = nextLead;
+  });
+
   function animate() {
     requestAnimationFrame(animate);
 
     egoCar.position.x += (current.egoX - egoCar.position.x) * 0.15;
     leadCar.position.x += (current.leadX - leadCar.position.x) * 0.15;
+    egoCar.position.z = laneOffsetZ;
+    leadCar.position.z = laneOffsetZ;
     leadCar.material.color.set(current.stale ? 0xff4d6d : 0xff9f1c);
 
     const centerX = (egoCar.position.x + leadCar.position.x) / 2;
@@ -148,6 +159,106 @@ function init3d() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
+}
+
+function buildVehicle(color, geometry) {
+  const material = new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.25 });
+  const body = geometry
+    ? new THREE.Mesh(geometry, material)
+    : new THREE.Mesh(new THREE.BoxGeometry(12, 4, 6), material);
+
+  body.position.y = geometry ? 3.6 : 2.0;
+  return body;
+}
+
+function loadVehicleModel(onLoad) {
+  if (typeof STLLoader === "undefined") {
+    return;
+  }
+
+  const loader = new STLLoader();
+  loader.load(
+    "/static/models/tesla.stl",
+    (geometry) => {
+      geometry.computeBoundingBox();
+      geometry.center();
+
+      const size = new THREE.Vector3();
+      geometry.boundingBox.getSize(size);
+      const maxSide = Math.max(size.x, size.z, 1e-6);
+      const scale = 12 / maxSide;
+      geometry.scale(scale, scale, scale);
+      geometry.rotateX(-Math.PI / 2);
+      geometry.rotateY(Math.PI / 2);
+
+      onLoad(geometry);
+    },
+    undefined,
+    (error) => {
+      console.warn("Failed to load STL model", error);
+    }
+  );
+}
+
+function createDashTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 32;
+
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#d4b83d";
+    ctx.fillRect(0, 10, 120, 12);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.repeat.set(50, 1);
+  texture.offset.set(0, 0);
+  texture.anisotropy = 4;
+  return texture;
+}
+
+function addRoadsideTrees(scene) {
+  const trunkGeometry = new THREE.CylinderGeometry(0.6, 0.8, 6, 6);
+  const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x6b4b2a, roughness: 0.9 });
+  const canopyGeometry = new THREE.ConeGeometry(3.2, 8, 7);
+  const canopyMaterial = new THREE.MeshStandardMaterial({ color: 0x2d6a34, roughness: 0.8 });
+
+  const treesPerSide = 70;
+  const totalTrees = treesPerSide * 2;
+  const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, totalTrees);
+  const canopies = new THREE.InstancedMesh(canopyGeometry, canopyMaterial, totalTrees);
+
+  const dummy = new THREE.Object3D();
+  let seed = 12345;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return (seed - 1) / 2147483646;
+  };
+
+  for (let i = 0; i < totalTrees; i += 1) {
+    const side = i % 2 === 0 ? 1 : -1;
+    const row = Math.floor(i / 2);
+    const x = -900 + row * 26 + (rand() - 0.5) * 10;
+    const z = side * (78 + rand() * 12);
+    const scale = 0.75 + rand() * 0.6;
+
+    dummy.position.set(x, 3 * scale, z);
+    dummy.scale.set(scale, scale, scale);
+    dummy.updateMatrix();
+    trunks.setMatrixAt(i, dummy.matrix);
+
+    dummy.position.set(x, 10 * scale, z);
+    dummy.scale.set(scale, scale, scale);
+    dummy.updateMatrix();
+    canopies.setMatrixAt(i, dummy.matrix);
+  }
+
+  scene.add(trunks);
+  scene.add(canopies);
 }
 
 function renderMetrics() {

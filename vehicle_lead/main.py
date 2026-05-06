@@ -95,6 +95,22 @@ def build_cam_payload(x_meter: float) -> dict[str, Any]:
                     },
                 }
             },
+            "lowFrequencyContainer": {
+                "basicVehicleContainerLowFrequency": {
+                    "vehicleRole": 0,
+                    "exteriorLights": {
+                        "lowBeamHeadlightsOn": False,
+                        "highBeamHeadlightsOn": False,
+                        "leftTurnSignalOn": False,
+                        "rightTurnSignalOn": False,
+                        "daytimeRunningLightsOn": False,
+                        "reverseLightOn": False,
+                        "fogLightOn": False,
+                        "parkingLightsOn": False,
+                    },
+                    "pathHistory": [],
+                }
+            },
         },
         "generationDeltaTime": generation_delta_time,
     }

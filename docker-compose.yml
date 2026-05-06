@@ -7,6 +7,8 @@ services:
       - ./vanetza_config/mosquitto/main.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
       - mgmt_network
+    ports:
+      - "1883:1883"
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health/main -m ok >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -21,6 +23,8 @@ services:
       - ./vanetza_config/mosquitto/lead.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
       - mgmt_network
+    ports:
+      - "1884:1883"
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health/lead -m ok >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -35,6 +39,8 @@ services:
       - ./vanetza_config/mosquitto/ego.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
       - mgmt_network
+    ports:
+      - "1885:1883"
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health/ego -m ok >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -51,7 +57,7 @@ services:
       - VANETZA_STATION_ID=${LEAD_STATION_ID:-101}
       - VANETZA_STATION_TYPE=5
       - VANETZA_MAC_ADDRESS=6e:06:e0:03:00:65
-      - VANETZA_INTERFACE=br0
+      - VANETZA_INTERFACE=eth0
       - VANETZA_USE_HARDCODED_GPS=true
       - VANETZA_LATITUDE=${LEAD_LATITUDE:-40.628300}
       - VANETZA_LONGITUDE=${LEAD_LONGITUDE:--8.654400}
@@ -59,7 +65,7 @@ services:
       - VANETZA_LOCAL_MQTT_PORT=${LEAD_BROKER_PORT:-1883}
       - VANETZA_REMOTE_MQTT_PORT=0
       - START_EMBEDDED_MOSQUITTO=false
-      - SUPPORT_MAC_BLOCKING=true
+      - SUPPORT_MAC_BLOCKING=false
       - VANETZA_CAM_ENABLED=true
       - VANETZA_CAM_PERIODICITY=0
       - VANETZA_CAM_TOPIC_IN=${CAM_IN_TOPIC:-vanetza/in/cam}
@@ -68,8 +74,8 @@ services:
       lead-broker:
         condition: service_healthy
     networks:
-      - mgmt_network
       - v2v_adhoc
+      - mgmt_network
 
   ego-vanetza:
     image: ghcr.io/nap-it/vanetza-nap:latest
@@ -81,7 +87,7 @@ services:
       - VANETZA_STATION_ID=${EGO_STATION_ID:-102}
       - VANETZA_STATION_TYPE=5
       - VANETZA_MAC_ADDRESS=6e:06:e0:03:00:66
-      - VANETZA_INTERFACE=br0
+      - VANETZA_INTERFACE=eth0
       - VANETZA_USE_HARDCODED_GPS=true
       - VANETZA_LATITUDE=${EGO_LATITUDE:-40.628250}
       - VANETZA_LONGITUDE=${EGO_LONGITUDE:--8.654700}
@@ -89,7 +95,7 @@ services:
       - VANETZA_LOCAL_MQTT_PORT=${EGO_BROKER_PORT:-1883}
       - VANETZA_REMOTE_MQTT_PORT=0
       - START_EMBEDDED_MOSQUITTO=false
-      - SUPPORT_MAC_BLOCKING=true
+      - SUPPORT_MAC_BLOCKING=false
       - VANETZA_CAM_ENABLED=true
       - VANETZA_CAM_PERIODICITY=0
       - VANETZA_CAM_TOPIC_IN=${CAM_IN_TOPIC:-vanetza/in/cam}
@@ -98,8 +104,8 @@ services:
       ego-broker:
         condition: service_healthy
     networks:
-      - mgmt_network
       - v2v_adhoc
+      - mgmt_network
 
   world-generator:
     build:

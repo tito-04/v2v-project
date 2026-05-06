@@ -75,6 +75,8 @@ def on_cam(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
         lon = float(ref_pos["longitude"])
         station_id = (
             payload.get("fields", {}).get("header", {}).get("stationId")
+            or payload.get("stationID")
+            or payload.get("stationId")
             or payload.get("itsPduHeader", {}).get("stationId")
             or payload.get("header", {}).get("stationId")
         )

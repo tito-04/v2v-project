@@ -40,13 +40,13 @@ You can change the host port with `UI_HOST_PORT` in `.env`.
 - Apply mild impairment on lead station:
 
 ```bash
-./scripts/netem_profiles.sh apply mild lead-vanetza br0
+./scripts/netem_profiles.sh apply mild lead-vanetza eth0
 ```
 
 - Clear impairment:
 
 ```bash
-./scripts/netem_profiles.sh clear lead-vanetza br0
+./scripts/netem_profiles.sh clear lead-vanetza eth0
 ```
 
 ## Next phase

@@ -14,6 +14,7 @@ LEAD_BROKER_HOST = os.getenv("LEAD_BROKER_HOST", "lead-broker")
 LEAD_BROKER_PORT = int(os.getenv("LEAD_BROKER_PORT", "1883"))
 TOPIC_WORLD_LEAD = os.getenv("WORLD_TOPIC_LEAD", "world/pos/lead")
 TOPIC_CAM_IN = os.getenv("CAM_IN_TOPIC", "vanetza/in/cam")
+TOPIC_CAM_TIME = os.getenv("CAM_TIME_TOPIC", "vanetza/time/cam")
 BASE_LAT = float(os.getenv("LEAD_LATITUDE", "40.628300"))
 BASE_LON = float(os.getenv("LEAD_LONGITUDE", "-8.654400"))
 
@@ -153,6 +154,9 @@ if __name__ == "__main__":
     while True:
         with state_lock:
             x_snapshot = lead_x
+
+        wave_ts = time.time()
+        cam_client.publish(TOPIC_CAM_TIME, json.dumps({"test": {"wave_timestamp": wave_ts}}), qos=1)
 
         cam = build_cam_payload(x_snapshot)
         cam_client.publish(TOPIC_CAM_IN, json.dumps(cam), qos=1)

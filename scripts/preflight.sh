@@ -96,6 +96,18 @@ fi
 
 docker compose up -d --wait main-broker lead-broker ego-broker lead-vanetza ego-vanetza >/dev/null
 
+# Ensure each broker is actually connected to mgmt_network (healthcheck uses localhost
+# so a container can be "healthy" even if it lost its network attachment). Force-recreate
+# any container that is missing from the network.
+for broker_container in main-broker lead-broker ego-broker; do
+  if ! docker network inspect "${mgmt_network_name}" \
+      --format '{{range .Containers}}{{.Name}} {{end}}' \
+      | grep -qw "${broker_container}"; then
+    echo "preflight: ${broker_container} not on mgmt_network, recreating..."
+    docker compose up -d --wait --force-recreate "${broker_container}" >/dev/null
+  fi
+done
+
 for broker_container in main-broker lead-broker ego-broker; do
   health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${broker_container}")"
   if [[ "${health}" != "healthy" ]]; then
@@ -111,12 +123,16 @@ if ! docker exec ego-vanetza sh -lc "ip link show '${ego_iface}' >/dev/null 2>&1
   fail "interface ${ego_iface} not found in ego-vanetza"
 fi
 
+# Test connectivity from within the mgmt_network using ego-broker (already on the network
+# and has mosquitto_pub). Avoids DNS resolution issues that arise with ephemeral
+# docker run containers that don't inherit Compose service name aliases.
 for endpoint in \
   "main:${main_broker_host}:${main_broker_port}" \
   "lead:${lead_broker_host}:${lead_broker_port}" \
   "ego:${ego_broker_host}:${ego_broker_port}"; do
   IFS=':' read -r name host port <<<"${endpoint}"
-  if ! docker run --rm --network "${mgmt_network_name}" eclipse-mosquitto:2 sh -lc "mosquitto_pub -h '${host}' -p '${port}' -t 'health/preflight/${name}' -m ok >/dev/null 2>&1"; then
+  if ! docker exec ego-broker mosquitto_pub -h "${host}" -p "${port}" \
+      -t "health/preflight/${name}" -m ok >/dev/null 2>&1; then
     fail "unable to reach ${name} broker at ${host}:${port} from mgmt network"
   fi
 done

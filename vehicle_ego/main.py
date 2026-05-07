@@ -19,7 +19,7 @@ TOPIC_WORLD_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
 TOPIC_CAM_OUT = os.getenv("CAM_OUT_TOPIC", "vanetza/out/cam")
 TOPIC_CAM_TIME = os.getenv("CAM_TIME_TOPIC", "vanetza/time/cam")
 UI_PORT = int(os.getenv("UI_PORT", "8080"))
-STALE_SECONDS = 3.0
+STALE_SECONDS = float(os.getenv("STALE_SECONDS", "3.0"))
 CAM_TIME_MATCH_WINDOW = 3.0
 
 

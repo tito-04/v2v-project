@@ -148,7 +148,7 @@ function init3d() {
 
     const centerX = (egoCar.position.x + leadCar.position.x) / 2;
     camera.position.x += (centerX - 30 - camera.position.x) * 0.03;
-    camera.lookAt(centerX, 0, 0);
+    camera.lookAt(centerX, 0, laneOffsetZ);
 
     renderMetrics();
     renderer.render(scene, camera);

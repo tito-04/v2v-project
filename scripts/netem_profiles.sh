@@ -2,9 +2,9 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 apply <baseline|mild|severe> <container> <interface>"
+  echo "Usage: $0 apply <baseline|mild|severe|blackout> <container> <interface>"
   echo "       $0 clear <container> <interface>"
-  echo "       $0 <baseline|mild|severe> [container] [interface]"
+  echo "       $0 <baseline|mild|severe|blackout> [container] [interface]"
 }
 
 if [[ $# -lt 1 ]]; then
@@ -26,10 +26,13 @@ apply_profile() {
       docker exec "${container}" tc qdisc del dev "${iface}" root 2>/dev/null || true
       ;;
     mild)
-      docker exec "${container}" tc qdisc replace dev "${iface}" root netem delay 80ms 20ms loss 2%
+      docker exec "${container}" tc qdisc replace dev "${iface}" root netem delay 300ms 50ms loss 5%
       ;;
     severe)
-      docker exec "${container}" tc qdisc replace dev "${iface}" root netem delay 250ms 80ms loss 12%
+      docker exec "${container}" tc qdisc replace dev "${iface}" root netem delay 800ms 200ms loss 25%
+      ;;
+    blackout)
+      docker exec "${container}" tc qdisc replace dev "${iface}" root netem loss 100%
       ;;
     *)
       echo "unknown profile: ${profile}"
@@ -48,7 +51,7 @@ clear_profile() {
 }
 
 case "${action}" in
-  baseline|mild|severe)
+  baseline|mild|severe|blackout)
     apply_profile "${action}" "${2:-${default_container}}" "${3:-${default_iface}}"
     ;;
   apply)

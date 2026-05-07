@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UI_HOST_PORT="${UI_HOST_PORT:-18080}"
 UI_STATUS_URL="${UI_STATUS_URL:-http://localhost:${UI_HOST_PORT}/api/status}"
 V2V_CONTAINER="${V2V_CONTAINER:-lead-vanetza}"
-V2V_IFACE="${V2V_IFACE:-br0}"
+V2V_IFACE="${V2V_IFACE:-eth0}"
 TOPIC_SAMPLE_RETRIES="${TOPIC_SAMPLE_RETRIES:-5}"
 
 sample_topic() {
@@ -34,9 +34,23 @@ sample_topic() {
 
 api_status() {
   local title="$1"
+  local attempt
+
   echo "\n== ${title} =="
-  curl -fsS "${UI_STATUS_URL}"
-  echo
+  for ((attempt = 1; attempt <= TOPIC_SAMPLE_RETRIES; attempt++)); do
+    if curl -fsS "${UI_STATUS_URL}"; then
+      echo
+      return 0
+    fi
+
+    if [[ "${attempt}" -lt "${TOPIC_SAMPLE_RETRIES}" ]]; then
+      echo "retrying status api (${attempt}/${TOPIC_SAMPLE_RETRIES})"
+      sleep 1
+    fi
+  done
+
+  echo "failed to fetch status api"
+  return 1
 }
 
 wait_for_cam_tick() {

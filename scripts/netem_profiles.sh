@@ -4,6 +4,7 @@ set -euo pipefail
 usage() {
   echo "Usage: $0 apply <baseline|mild|severe> <container> <interface>"
   echo "       $0 clear <container> <interface>"
+  echo "       $0 <baseline|mild|severe> [container] [interface]"
 }
 
 if [[ $# -lt 1 ]]; then
@@ -12,6 +13,8 @@ if [[ $# -lt 1 ]]; then
 fi
 
 action="$1"
+default_container="${V2V_CONTAINER:-lead-vanetza}"
+default_iface="${V2V_IFACE:-eth0}"
 
 apply_profile() {
   local profile="$1"
@@ -45,6 +48,9 @@ clear_profile() {
 }
 
 case "${action}" in
+  baseline|mild|severe)
+    apply_profile "${action}" "${2:-${default_container}}" "${3:-${default_iface}}"
+    ;;
   apply)
     if [[ $# -ne 4 ]]; then
       usage

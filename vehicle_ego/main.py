@@ -13,10 +13,14 @@ MAIN_BROKER_HOST = os.getenv("MAIN_BROKER_HOST", "main-broker")
 MAIN_BROKER_PORT = int(os.getenv("MAIN_BROKER_PORT", "1883"))
 EGO_BROKER_HOST = os.getenv("EGO_BROKER_HOST", "ego-broker")
 EGO_BROKER_PORT = int(os.getenv("EGO_BROKER_PORT", "1883"))
+LEAD_BROKER_HOST = os.getenv("LEAD_BROKER_HOST", "lead-broker")
+LEAD_BROKER_PORT = int(os.getenv("LEAD_BROKER_PORT", "1883"))
 TOPIC_WORLD_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
 TOPIC_CAM_OUT = os.getenv("CAM_OUT_TOPIC", "vanetza/out/cam")
+TOPIC_CAM_TIME = os.getenv("CAM_TIME_TOPIC", "vanetza/time/cam")
 UI_PORT = int(os.getenv("UI_PORT", "8080"))
 STALE_SECONDS = 3.0
+CAM_TIME_MATCH_WINDOW = 3.0
 
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -26,10 +30,11 @@ state_lock = threading.Lock()
 state: dict[str, Any] = {
     "ego": {"x": 20.0, "updated_at": 0.0},
     "lead": {"x": 50.0, "lat": None, "lon": None, "updated_at": 0.0, "station_id": None},
-    "metrics": {"cam_rate_hz": 0.0, "last_cam_age_sec": None, "stale": True},
+    "metrics": {"cam_rate_hz": 0.0, "last_cam_age_sec": None, "last_cam_latency_sec": None, "stale": True},
 }
 _cam_counter = 0
 _cam_window_start = time.time()
+_last_wave_timestamp: float | None = None
 
 
 def meters_from_lon_delta(delta_lon: float, latitude: float) -> float:
@@ -59,33 +64,43 @@ def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) ->
     emit_state()
 
 
-def on_cam(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+def parse_cam_payload(payload: dict[str, Any]) -> tuple[float, float, Any]:
+    # Support both raw CAM JSON and wrapper formats like {"fields": {"header": ..., "cam": ...}}
+    cam_root = payload.get("fields", {}).get("cam", payload)
+    cam_params = cam_root.get("camParameters", {})
+    basic = cam_params.get("basicContainer", {})
+    ref_pos = basic.get("referencePosition", {})
+
+    lat = float(ref_pos["latitude"])
+    lon = float(ref_pos["longitude"])
+    station_id = (
+        payload.get("fields", {}).get("header", {}).get("stationId")
+        or payload.get("stationID")
+        or payload.get("stationId")
+        or payload.get("itsPduHeader", {}).get("stationId")
+        or payload.get("header", {}).get("stationId")
+    )
+    return lat, lon, station_id
+
+
+def on_cam_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
     global _cam_counter
     global _cam_window_start
 
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
-        # Support both raw CAM JSON and wrapper formats like {"fields": {"header": ..., "cam": ...}}
-        cam_root = payload.get("fields", {}).get("cam", payload)
-        cam_params = cam_root.get("camParameters", {})
-        basic = cam_params.get("basicContainer", {})
-        ref_pos = basic.get("referencePosition", {})
-
-        lat = float(ref_pos["latitude"])
-        lon = float(ref_pos["longitude"])
-        station_id = (
-            payload.get("fields", {}).get("header", {}).get("stationId")
-            or payload.get("stationID")
-            or payload.get("stationId")
-            or payload.get("itsPduHeader", {}).get("stationId")
-            or payload.get("header", {}).get("stationId")
-        )
+        lat, lon, station_id = parse_cam_payload(payload)
     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         print(f"cam parse error: {exc}")
         return
 
     _cam_counter += 1
     with state_lock:
+        if _last_wave_timestamp is not None:
+            latency = time.time() - _last_wave_timestamp
+            if 0 <= latency <= CAM_TIME_MATCH_WINDOW:
+                state["metrics"]["last_cam_latency_sec"] = latency
+
         base_lon = -8.6544
         lead_x = meters_from_lon_delta(lon - base_lon, lat)
 
@@ -106,6 +121,24 @@ def on_cam(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
             _cam_window_start = now
 
     emit_state()
+
+
+def on_cam_time(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    global _last_wave_timestamp
+
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+        test = payload.get("test", {})
+        wave_timestamp = float(test.get("wave_timestamp"))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        print(f"cam time parse error: {exc}")
+        return
+
+    _last_wave_timestamp = wave_timestamp
+
+
+def on_cam_default(_client: mqtt.Client, _userdata: Any, _msg: mqtt.MQTTMessage) -> None:
+    return
 
 
 def monitor_stale_loop() -> None:
@@ -134,10 +167,17 @@ def start_mqtt() -> None:
     world_client.loop_start()
 
     cam_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vehicle-ego-cam")
-    cam_client.on_message = on_cam
+    cam_client.on_message = on_cam_default
+    cam_client.message_callback_add(TOPIC_CAM_OUT, on_cam_out)
     cam_client.connect(EGO_BROKER_HOST, EGO_BROKER_PORT, keepalive=30)
     cam_client.subscribe(TOPIC_CAM_OUT, qos=1)
     cam_client.loop_start()
+
+    time_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vehicle-ego-time")
+    time_client.on_message = on_cam_time
+    time_client.connect(LEAD_BROKER_HOST, LEAD_BROKER_PORT, keepalive=30)
+    time_client.subscribe(TOPIC_CAM_TIME, qos=1)
+    time_client.loop_start()
 
 
 @app.route("/")

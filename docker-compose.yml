@@ -70,6 +70,7 @@ services:
       - VANETZA_CAM_PERIODICITY=0
       - VANETZA_CAM_TOPIC_IN=${CAM_IN_TOPIC:-vanetza/in/cam}
       - VANETZA_CAM_TOPIC_OUT=${CAM_OUT_TOPIC:-vanetza/out/cam}
+      - VANETZA_CAM_TOPIC_TIME=${CAM_TIME_TOPIC:-vanetza/time/cam}
     depends_on:
       lead-broker:
         condition: service_healthy
@@ -97,7 +98,7 @@ services:
       - START_EMBEDDED_MOSQUITTO=false
       - SUPPORT_MAC_BLOCKING=false
       - VANETZA_CAM_ENABLED=true
-      - VANETZA_CAM_PERIODICITY=0
+      - VANETZA_CAM_PERIODICITY=${EGO_CAM_PERIODICITY:-0}
       - VANETZA_CAM_TOPIC_IN=${CAM_IN_TOPIC:-vanetza/in/cam}
       - VANETZA_CAM_TOPIC_OUT=${CAM_OUT_TOPIC:-vanetza/out/cam}
     depends_on:
@@ -165,8 +166,11 @@ services:
       - MAIN_BROKER_PORT=${MAIN_BROKER_PORT:-1883}
       - EGO_BROKER_HOST=${EGO_BROKER_HOST:-ego-broker}
       - EGO_BROKER_PORT=${EGO_BROKER_PORT:-1883}
+      - LEAD_BROKER_HOST=${LEAD_BROKER_HOST:-lead-broker}
+      - LEAD_BROKER_PORT=${LEAD_BROKER_PORT:-1883}
       - WORLD_TOPIC_EGO=${WORLD_TOPIC_EGO:-world/pos/ego}
       - CAM_OUT_TOPIC=${CAM_OUT_TOPIC:-vanetza/out/cam}
+      - CAM_TIME_TOPIC=${CAM_TIME_TOPIC:-vanetza/time/cam}
       - UI_PORT=8080
     depends_on:
       main-broker:

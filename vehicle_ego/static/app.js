@@ -7,6 +7,7 @@ let current = {
   stale: true,
   camRateHz: 0,
   camAge: null,
+  camLatency: null,
   stationId: null,
 };
 
@@ -20,6 +21,7 @@ function applyState(payload) {
   current.stale = payload.metrics.stale;
   current.camRateHz = payload.metrics.cam_rate_hz;
   current.camAge = payload.metrics.last_cam_age_sec;
+  current.camLatency = payload.metrics.last_cam_latency_sec ?? null;
   current.stationId = payload.lead.station_id;
 }
 
@@ -264,11 +266,13 @@ function addRoadsideTrees(scene) {
 function renderMetrics() {
   const ageText = current.camAge == null ? "n/a" : `${current.camAge.toFixed(2)}s`;
   const rateText = Number.isFinite(current.camRateHz) ? current.camRateHz.toFixed(2) : "0.00";
+  const latencyText = current.camLatency == null ? "n/a" : `${current.camLatency.toFixed(2)}s`;
 
   document.getElementById("metrics").textContent = [
     `Lead Station ID: ${current.stationId ?? "n/a"}`,
     `CAM Rate: ${rateText} Hz`,
     `Last CAM Age: ${ageText}`,
+    `CAM Latency: ${latencyText}`,
     `Stale: ${current.stale ? "yes" : "no"}`,
   ].join("\n");
 }

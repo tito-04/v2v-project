@@ -1,6 +1,6 @@
 # MQTT Topic Contract
 
-This project follows vanetza-nap CAM input/output conventions. The UI acts as an ego observer view: the ego position comes from its own state, and the lead position comes from CAMs received by the ego.
+This project follows vanetza-nap CAM input/output conventions. The UI acts as an ego observer view: the ego position comes from `world/pos/ego`, and the lead position comes from CAMs received by the ego.
 
 ## Main Broker
 
@@ -20,6 +20,11 @@ This project follows vanetza-nap CAM input/output conventions. The UI acts as an
   - Producer: vehicle-lead
   - Consumer: lead-vanetza
   - Payload: JSON CAM as expected by vanetza-nap (input message without ITS PDU header)
+
+- Topic: `vanetza/time/cam`
+  - Producer: lead-vanetza (if enabled)
+  - Consumer: vehicle-ego
+  - Payload: CAM timing metadata (used for end-to-end latency metrics)
 
 ## Ego Broker
 

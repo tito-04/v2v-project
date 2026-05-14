@@ -131,19 +131,37 @@ def on_world_message(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage
         lead_x = new_x
 
 
+def _connect_with_retry(host: str, port: int, client_id: str) -> mqtt.Client:
+    """Connect to MQTT broker with exponential backoff retry."""
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+    
+    max_retries = 10
+    retry_delay = 1
+    for attempt in range(max_retries):
+        try:
+            client.connect(host, port, keepalive=30)
+            client.loop_start()
+            print(f"[{client_id}] Connected to {host}:{port}")
+            return client
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"[{client_id}] Connection attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 30)  # Cap at 30s
+            else:
+                print(f"[{client_id}] Failed to connect after {max_retries} attempts. Giving up.")
+                raise
+
+
 def start_world_subscriber() -> mqtt.Client:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vehicle-lead-world")
+    client = _connect_with_retry(MAIN_BROKER_HOST, MAIN_BROKER_PORT, "vehicle-lead-world")
     client.on_message = on_world_message
-    client.connect(MAIN_BROKER_HOST, MAIN_BROKER_PORT, keepalive=30)
     client.subscribe(TOPIC_WORLD_LEAD, qos=1)
-    client.loop_start()
     return client
 
 
 def start_cam_publisher() -> mqtt.Client:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vehicle-lead-cam")
-    client.connect(LEAD_BROKER_HOST, LEAD_BROKER_PORT, keepalive=30)
-    client.loop_start()
+    client = _connect_with_retry(LEAD_BROKER_HOST, LEAD_BROKER_PORT, "vehicle-lead-cam")
     return client
 
 

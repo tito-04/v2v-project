@@ -18,9 +18,24 @@ ego_x = float(os.getenv("EGO_START_X", "20.0"))
 
 def connect_client() -> mqtt.Client:
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="world-generator")
-    client.connect(MAIN_BROKER_HOST, MAIN_BROKER_PORT, keepalive=30)
-    client.loop_start()
-    return client
+    
+    # Retry with exponential backoff
+    max_retries = 10
+    retry_delay = 1
+    for attempt in range(max_retries):
+        try:
+            client.connect(MAIN_BROKER_HOST, MAIN_BROKER_PORT, keepalive=30)
+            client.loop_start()
+            print(f"Connected to {MAIN_BROKER_HOST}:{MAIN_BROKER_PORT}")
+            return client
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Connection attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 30)  # Cap at 30s
+            else:
+                print(f"Failed to connect after {max_retries} attempts. Giving up.")
+                raise
 
 
 def publish_position(client: mqtt.Client, topic: str, x_value: float) -> None:

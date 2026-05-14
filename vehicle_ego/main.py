@@ -159,25 +159,41 @@ def monitor_stale_loop() -> None:
         time.sleep(0.5)
 
 
-def start_mqtt() -> None:
-    world_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vehicle-ego-world")
-    world_client.on_message = on_world_ego
-    world_client.connect(MAIN_BROKER_HOST, MAIN_BROKER_PORT, keepalive=30)
-    world_client.subscribe(TOPIC_WORLD_EGO, qos=1)
-    world_client.loop_start()
+def _connect_with_retry(host: str, port: int, client_id: str) -> mqtt.Client:
+    """Connect to MQTT broker with exponential backoff retry."""
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+    
+    max_retries = 10
+    retry_delay = 1
+    for attempt in range(max_retries):
+        try:
+            client.connect(host, port, keepalive=30)
+            client.loop_start()
+            print(f"[{client_id}] Connected to {host}:{port}")
+            return client
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"[{client_id}] Connection attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 30)  # Cap at 30s
+            else:
+                print(f"[{client_id}] Failed to connect after {max_retries} attempts. Giving up.")
+                raise
 
-    cam_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vehicle-ego-cam")
+
+def start_mqtt() -> None:
+    world_client = _connect_with_retry(MAIN_BROKER_HOST, MAIN_BROKER_PORT, "vehicle-ego-world")
+    world_client.on_message = on_world_ego
+    world_client.subscribe(TOPIC_WORLD_EGO, qos=1)
+
+    cam_client = _connect_with_retry(EGO_BROKER_HOST, EGO_BROKER_PORT, "vehicle-ego-cam")
     cam_client.on_message = on_cam_default
     cam_client.message_callback_add(TOPIC_CAM_OUT, on_cam_out)
-    cam_client.connect(EGO_BROKER_HOST, EGO_BROKER_PORT, keepalive=30)
     cam_client.subscribe(TOPIC_CAM_OUT, qos=1)
-    cam_client.loop_start()
 
-    time_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vehicle-ego-time")
+    time_client = _connect_with_retry(LEAD_BROKER_HOST, LEAD_BROKER_PORT, "vehicle-ego-time")
     time_client.on_message = on_cam_time
-    time_client.connect(LEAD_BROKER_HOST, LEAD_BROKER_PORT, keepalive=30)
     time_client.subscribe(TOPIC_CAM_TIME, qos=1)
-    time_client.loop_start()
 
 
 @app.route("/")

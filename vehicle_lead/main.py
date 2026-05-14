@@ -13,6 +13,7 @@ MAIN_BROKER_PORT = int(os.getenv("MAIN_BROKER_PORT", "1883"))
 LEAD_BROKER_HOST = os.getenv("LEAD_BROKER_HOST", "lead-broker")
 LEAD_BROKER_PORT = int(os.getenv("LEAD_BROKER_PORT", "1883"))
 TOPIC_WORLD_LEAD = os.getenv("WORLD_TOPIC_LEAD", "world/pos/lead")
+TOPIC_WORLD_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
 TOPIC_WORLD_OBSTACLE = os.getenv("WORLD_TOPIC_OBSTACLE", "world/pos/obstacle")
 TOPIC_CAM_IN = os.getenv("CAM_IN_TOPIC", "vanetza/in/cam")
 TOPIC_CAM_TIME = os.getenv("CAM_TIME_TOPIC", "vanetza/time/cam")
@@ -231,11 +232,29 @@ def on_world_lead(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -
         print(f"world lead parse error: {exc}")
 
 
-def on_world_obstacle(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    """Ego vehicle also counts as an obstacle for detection."""
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
         with state_lock:
-            world_objects["obstacle"] = {
+            world_objects["ego"] = {
+                "x": float(payload["x"]),
+                "y": float(payload.get("y", 0.0)),
+                "heading": float(payload.get("heading", 0.0)),
+                "speed": float(payload.get("speed", 0.0)),
+            }
+    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        print(f"world ego parse error: {exc}")
+
+
+def on_world_obstacle(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+        topic = msg.topic  # e.g., "world/pos/obstacle/1"
+        # Extract obstacle ID from topic (e.g., "1" from "world/pos/obstacle/1")
+        obs_id = topic.split("/")[-1] if "/" in topic else "obstacle"
+        with state_lock:
+            world_objects[f"obstacle_{obs_id}"] = {
                 "x": float(payload["x"]),
                 "y": float(payload.get("y", 0.0)),
                 "heading": float(payload.get("heading", 0.0)),
@@ -270,9 +289,11 @@ def _connect_with_retry(host: str, port: int, client_id: str) -> mqtt.Client:
 def start_world_subscriber() -> mqtt.Client:
     client = _connect_with_retry(MAIN_BROKER_HOST, MAIN_BROKER_PORT, "vehicle-lead-world")
     client.message_callback_add(TOPIC_WORLD_LEAD, on_world_lead)
-    client.message_callback_add(TOPIC_WORLD_OBSTACLE, on_world_obstacle)
+    client.message_callback_add(TOPIC_WORLD_EGO, on_world_ego)
+    # Subscribe to all obstacles: world/pos/obstacle/+ (wildcard matches any obstacle ID)
+    client.message_callback_add("world/pos/obstacle/+", on_world_obstacle)
     client.on_message = lambda c, u, m: None
-    client.subscribe([(TOPIC_WORLD_LEAD, 1), (TOPIC_WORLD_OBSTACLE, 1)])
+    client.subscribe([(TOPIC_WORLD_LEAD, 1), (TOPIC_WORLD_EGO, 1), ("world/pos/obstacle/+", 1)])
     return client
 
 

@@ -2,9 +2,10 @@ import * as THREE from "./vendor/three.module.js";
 import { STLLoader } from "./vendor/stl-loader.js";
 
 let current = {
-  selfX: 20,
+  selfX: 10,
   selfY: 0,
-  objects: {},
+  selfHeading: 0,
+  objects: {},  // All objects including obstacles, lead car, etc.
   stale: true,
   camRateHz: 0,
   camAge: null,
@@ -18,6 +19,7 @@ function applyState(payload) {
 
   current.selfX = payload.self.x;
   current.selfY = payload.self.y ?? 0;
+  current.selfHeading = payload.self.heading ?? 0;
   current.objects = payload.objects ?? {};
   current.stale = payload.metrics.stale;
   current.camRateHz = payload.metrics.cam_rate_hz;
@@ -140,6 +142,21 @@ function init3d() {
   fovMesh.position.y = 0.05;
   scene.add(fovMesh);
 
+  // FoV cone for ego car (same 80 m range, ±60° half-angle)
+  const egoFovShape = new THREE.Shape();
+  egoFovShape.moveTo(0, 0);
+  for (let i = 0; i <= 40; i++) {
+    const a = THREE.MathUtils.degToRad(-FOV_HALF_DEG + (i / 40) * FOV_HALF_DEG * 2);
+    egoFovShape.lineTo(Math.cos(a) * FOV_RANGE, Math.sin(a) * FOV_RANGE);
+  }
+  egoFovShape.lineTo(0, 0);
+  const egoFovGeo = new THREE.ShapeGeometry(egoFovShape);
+  const egoFovMat = new THREE.MeshBasicMaterial({ color: 0x52b788, transparent: true, opacity: 0.13, side: THREE.DoubleSide });
+  const egoFovMesh = new THREE.Mesh(egoFovGeo, egoFovMat);
+  egoFovMesh.rotation.x = -Math.PI / 2;
+  egoFovMesh.position.y = 0.05;
+  scene.add(egoFovMesh);
+
   camera.position.set(-30, 45, 70);
   camera.lookAt(0, 0, 0);
 
@@ -177,6 +194,11 @@ function init3d() {
     fovMat.color.set(hasCpm ? 0x52b788 : 0x4cc9f0);
     fovMat.opacity = hasCpm ? 0.28 : 0.13;
 
+    // Update FoV cone to follow ego car
+    egoFovMesh.position.x = egoCar.position.x;
+    egoFovMesh.position.z = egoCar.position.z;
+    // Cone color updates later based on detection of any object in FoV
+
     // Sync world objects (obstacles) as colored boxes by source
     const worldEntries = Object.entries(current.objects).filter(([, o]) => o.source !== "cam");
     const worldKeys = new Set(worldEntries.map(([k]) => k));
@@ -189,19 +211,46 @@ function init3d() {
     for (const [key, obj] of worldEntries) {
       if (!worldObjects[key]) {
         const geo = new THREE.BoxGeometry(8, 5, 5);
-        const color = obj.source === "cpm" ? 0x52b788 : 0xe63946;
-        const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1 });
+        // Color by source: CPM=green, world obstacles=red, lead_car=orange
+        let color = 0xe63946;  // default red for obstacles
+        if (obj.source === "cpm") color = 0x52b788;  // green
+        else if (obj.source === "lead_car") color = 0xffa500;  // orange
+        
+        const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1, transparent: true });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.y = 2.5;
         scene.add(mesh);
         worldObjects[key] = mesh;
       }
-      // Update color dynamically (cpm=green, world=red, stale=grey)
-      const targetColor = obj.stale ? 0x888888 : (obj.source === "cpm" ? 0x52b788 : 0xe63946);
+      
+      // Update color and opacity dynamically
+      let targetColor = 0xe63946;  // default red
+      if (obj.stale) {
+        targetColor = 0x888888;  // grey when stale
+      } else if (obj.source === "cpm") {
+        targetColor = 0x52b788;  // green for CPM
+      } else if (obj.source === "lead_car") {
+        targetColor = 0xffa500;  // orange for lead car
+      }
+      
       worldObjects[key].material.color.set(targetColor);
+      // Apply transparency based on FoV detection (ego or lead)
+      if ("in_ego_fov" in obj || "in_lead_fov" in obj) {
+        const inEgoFov = obj.in_ego_fov === true;
+        const inLeadFov = obj.in_lead_fov === true;
+        worldObjects[key].material.opacity = (inEgoFov || inLeadFov) ? 0.85 : 0.25;
+      } else {
+        worldObjects[key].material.opacity = 0.75;  // default opacity for objects without FoV tracking
+      }
+      
       worldObjects[key].position.x += ((obj.x ?? 0) - worldObjects[key].position.x) * 0.15;
       worldObjects[key].position.z += ((obj.y ?? 0) - worldObjects[key].position.z) * 0.15;
     }
+
+    // Update FoV cone color based on detection status (any object in FoV)
+    const hasAnyDetection = Object.values(current.objects).some(o => o.in_ego_fov && (o.source === "world" || o.source === "lead_car"));
+    egoFovMat.color.set(hasAnyDetection ? 0x52b788 : 0x2ec4b6);
+    egoFovMat.opacity = hasAnyDetection ? 0.28 : 0.13;
 
     const centerX = (egoCar.position.x + leadCar.position.x) / 2;
     camera.position.x += (centerX - 30 - camera.position.x) * 0.03;

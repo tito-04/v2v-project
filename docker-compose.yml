@@ -123,8 +123,13 @@ services:
       - EGO_START_X=${EGO_START_X:-20.0}
       - X_STEP_METERS=${X_STEP_METERS:-5.0}
       - WORLD_TOPIC_OBSTACLE=${WORLD_TOPIC_OBSTACLE:-world/pos/obstacle}
-      - OBSTACLE_X=${OBSTACLE_X:-200.0}
-      - OBSTACLE_Y=${OBSTACLE_Y:-0.0}
+      - NUM_OBSTACLES=${NUM_OBSTACLES:-3}
+      - OBSTACLE_1_X=${OBSTACLE_1_X:-100}
+      - OBSTACLE_1_Y=${OBSTACLE_1_Y:-0}
+      - OBSTACLE_2_X=${OBSTACLE_2_X:-200}
+      - OBSTACLE_2_Y=${OBSTACLE_2_Y:-0}
+      - OBSTACLE_3_X=${OBSTACLE_3_X:-300}
+      - OBSTACLE_3_Y=${OBSTACLE_3_Y:-0}
       - WORLD_LENGTH=${WORLD_LENGTH:-500.0}
     depends_on:
       main-broker:
@@ -176,6 +181,7 @@ services:
       - LEAD_BROKER_HOST=${LEAD_BROKER_HOST:-lead-broker}
       - LEAD_BROKER_PORT=${LEAD_BROKER_PORT:-1883}
       - WORLD_TOPIC_EGO=${WORLD_TOPIC_EGO:-world/pos/ego}
+      - WORLD_TOPIC_OBSTACLE=${WORLD_TOPIC_OBSTACLE:-world/pos/obstacle}
       - CPM_OUT_TOPIC=${CPM_OUT_TOPIC:-vanetza/out/cpm}
       - CAM_OUT_TOPIC=${CAM_OUT_TOPIC:-vanetza/out/cam}
       - CAM_TIME_TOPIC=${CAM_TIME_TOPIC:-vanetza/time/cam}

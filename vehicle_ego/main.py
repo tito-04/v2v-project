@@ -16,6 +16,8 @@ EGO_BROKER_PORT = int(os.getenv("EGO_BROKER_PORT", "1883"))
 LEAD_BROKER_HOST = os.getenv("LEAD_BROKER_HOST", "lead-broker")
 LEAD_BROKER_PORT = int(os.getenv("LEAD_BROKER_PORT", "1883"))
 TOPIC_WORLD_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
+TOPIC_WORLD_LEAD = os.getenv("WORLD_TOPIC_LEAD", "world/pos/lead")
+TOPIC_WORLD_OBSTACLE = os.getenv("WORLD_TOPIC_OBSTACLE", "world/pos/obstacle")
 TOPIC_CPM_OUT = os.getenv("CPM_OUT_TOPIC", "vanetza/out/cpm")
 TOPIC_CAM_OUT = os.getenv("CAM_OUT_TOPIC", "vanetza/out/cam")
 TOPIC_CAM_TIME = os.getenv("CAM_TIME_TOPIC", "vanetza/time/cam")
@@ -24,6 +26,8 @@ STALE_SECONDS = float(os.getenv("STALE_SECONDS", "3.0"))
 CAM_TIME_MATCH_WINDOW = 3.0
 BASE_LAT = float(os.getenv("WORLD_BASE_LAT", "40.628300"))
 BASE_LON = float(os.getenv("WORLD_BASE_LON", "-8.654400"))
+FOV_RANGE_M = 80.0
+FOV_HALF_ANGLE_DEG = 60.0
 
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -31,8 +35,8 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 state_lock = threading.Lock()
 state: dict[str, Any] = {
-    "self": {"x": 20.0, "y": 0.0, "heading": 0.0, "speed": 0.0, "updated_at": 0.0},
-    "objects": {},
+    "self": {"x": 10.0, "y": 0.0, "heading": 0.0, "speed": 0.0, "updated_at": 0.0, "fov_range": FOV_RANGE_M, "fov_half_angle": FOV_HALF_ANGLE_DEG},
+    "objects": {},  # All detected objects: CAM (from lead), CPM (from lead), world obstacles, lead car
     "metrics": {"cam_rate_hz": 0.0, "last_cam_age_sec": None, "last_cam_latency_sec": None, "stale": True},
 }
 _cam_counter = 0
@@ -56,6 +60,33 @@ def emit_state() -> None:
     socketio.emit("state_update", payload)
 
 
+def is_in_fov(vehicle_x: float, vehicle_y: float, vehicle_heading: float, obj_x: float, obj_y: float, fov_range: float, fov_half_angle: float) -> bool:
+    """Check if object is within vehicle's field of view cone."""
+    import math
+    
+    # Calculate relative position
+    rel_x = obj_x - vehicle_x
+    rel_y = obj_y - vehicle_y
+    distance = math.sqrt(rel_x**2 + rel_y**2)
+    
+    # Check range
+    if distance > fov_range:
+        return False
+    
+    # For simplicity, assume heading of 0° = +X direction, and cone is centered on that
+    # Angle from vehicle to object (in world coordinates)
+    if distance < 0.1:  # Avoid division by zero
+        return True
+    
+    angle_to_obj = math.degrees(math.atan2(rel_y, rel_x))
+    angle_diff = abs(angle_to_obj - vehicle_heading) % 360
+    if angle_diff > 180:
+        angle_diff = 360 - angle_diff
+    
+    # Check if within cone angle
+    return angle_diff <= fov_half_angle
+
+
 def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
@@ -65,8 +96,78 @@ def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) ->
             state["self"]["heading"] = float(payload.get("heading", 0.0))
             state["self"]["speed"] = float(payload.get("speed", 0.0))
             state["self"]["updated_at"] = time.time()
+            
+            # Update all world objects (obstacles and lead car) FoV status
+            for obj_key, obj_data in list(state["objects"].items()):
+                if obj_data.get("source") in ("world", "lead_car"):
+                    obj_data["in_ego_fov"] = is_in_fov(
+                        state["self"]["x"], state["self"]["y"], state["self"]["heading"],
+                        obj_data["x"], obj_data["y"],
+                        FOV_RANGE_M, FOV_HALF_ANGLE_DEG
+                    )
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"world ego parse error: {exc}")
+        return
+
+    emit_state()
+
+
+def on_world_lead(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    """Lead car position - also detect it as an observable object."""
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+        with state_lock:
+            lead_x = float(payload["x"])
+            lead_y = float(payload.get("y", 0.0))
+            state["objects"]["lead_car"] = {
+                "x": lead_x,
+                "y": lead_y,
+                "heading": float(payload.get("heading", 0.0)),
+                "speed": float(payload.get("speed", 0.0)),
+                "source": "lead_car",
+                "updated_at": time.time(),
+                "stale": False,
+                "in_ego_fov": is_in_fov(
+                    state["self"]["x"], state["self"]["y"], state["self"]["heading"],
+                    lead_x, lead_y,
+                    FOV_RANGE_M, FOV_HALF_ANGLE_DEG
+                ),
+            }
+    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        print(f"world lead parse error: {exc}")
+        return
+
+    emit_state()
+
+
+def on_world_obstacle(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    """Handle obstacles from world/pos/obstacle/N topic."""
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+        topic = msg.topic  # e.g., "world/pos/obstacle/1"
+        # Extract obstacle ID from topic (e.g., "1" from "world/pos/obstacle/1", or "obstacle" from "world/pos/obstacle")
+        obs_id = topic.split("/")[-1] if "/" in topic else "obstacle"
+        
+        x = float(payload["x"])
+        y = float(payload.get("y", 0.0))
+        
+        with state_lock:
+            state["objects"][f"obstacle_{obs_id}"] = {
+                "x": x,
+                "y": y,
+                "heading": float(payload.get("heading", 0.0)),
+                "speed": float(payload.get("speed", 0.0)),
+                "source": "world",
+                "updated_at": time.time(),
+                "stale": False,
+                "in_ego_fov": is_in_fov(
+                    state["self"]["x"], state["self"]["y"], state["self"]["heading"],
+                    x, y,
+                    FOV_RANGE_M, FOV_HALF_ANGLE_DEG
+                ),
+            }
+    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        print(f"world obstacle parse error: {exc}")
         return
 
     emit_state()
@@ -110,6 +211,16 @@ def on_cpm_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
 
         now = time.time()
         with state_lock:
+            # Reset lead detection flags for world obstacles
+            for obj in state["objects"].values():
+                if obj.get("source") == "world":
+                    obj["in_lead_fov"] = False
+
+            world_obstacles = {
+                key: obj for key, obj in state["objects"].items()
+                if obj.get("source") == "world"
+            }
+
             for container in inner.get("cpmContainers", []):
                 if container.get("containerId") != 5:
                     continue
@@ -118,14 +229,26 @@ def on_cpm_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
                     pos = obj.get("position", {})
                     dx = float(pos.get("xCoordinate", {}).get("value", 0.0))
                     dy = float(pos.get("yCoordinate", {}).get("value", 0.0))
-                    key = f"cpm_{obj_id}"
+                    obj_x = sender_x + dx
+                    obj_y = sender_y + dy
+
+                    # Mark any matching world obstacle as detected by lead
+                    for world_obj in world_obstacles.values():
+                        dist = ((obj_x - world_obj["x"]) ** 2 + (obj_y - world_obj["y"]) ** 2) ** 0.5
+                        if dist < 5.0:
+                            world_obj["in_lead_fov"] = True
+                            world_obj["updated_at"] = now
+
+                    sender_tag = sender_id if sender_id is not None else "unknown"
+                    key = f"cpm_{sender_tag}_{obj_id}"
                     state["objects"][key] = {
-                        "x": sender_x + dx,
-                        "y": sender_y + dy,
+                        "x": obj_x,
+                        "y": obj_y,
                         "source": "cpm",
                         "detected_by": sender_id,
                         "updated_at": now,
                         "stale": False,
+                        "in_lead_fov": True,
                     }
     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         print(f"cpm out parse error: {exc}")
@@ -205,7 +328,8 @@ def monitor_stale_loop() -> None:
             now = time.time()
             cam_ages: list[float] = []
             for obj in state["objects"].values():
-                age = max(now - obj["updated_at"], 0.0)
+                updated_at = obj.get("updated_at", now)
+                age = max(now - updated_at, 0.0)
                 obj["stale"] = age > STALE_SECONDS
                 if obj["source"] == "cam":
                     cam_ages.append(age)
@@ -248,7 +372,12 @@ def start_mqtt() -> None:
     world_client = _connect_with_retry(MAIN_BROKER_HOST, MAIN_BROKER_PORT, "vehicle-ego-world")
     world_client.on_message = on_cam_default
     world_client.message_callback_add(TOPIC_WORLD_EGO, on_world_ego)
+    world_client.message_callback_add(TOPIC_WORLD_LEAD, on_world_lead)
+    # Subscribe to all obstacles: world/pos/obstacle/+ (wildcard matches any obstacle ID)
+    world_client.message_callback_add("world/pos/obstacle/+", on_world_obstacle)
     world_client.subscribe(TOPIC_WORLD_EGO, qos=1)
+    world_client.subscribe(TOPIC_WORLD_LEAD, qos=1)
+    world_client.subscribe("world/pos/obstacle/+", qos=1)
 
     cam_client = _connect_with_retry(EGO_BROKER_HOST, EGO_BROKER_PORT, "vehicle-ego-cam")
     cam_client.on_message = on_cam_default

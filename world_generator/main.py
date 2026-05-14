@@ -9,11 +9,18 @@ MAIN_BROKER_HOST = os.getenv("MAIN_BROKER_HOST", "main-broker")
 MAIN_BROKER_PORT = int(os.getenv("MAIN_BROKER_PORT", "1883"))
 TOPIC_LEAD = os.getenv("WORLD_TOPIC_LEAD", "world/pos/lead")
 TOPIC_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
+TOPIC_OBSTACLE = os.getenv("WORLD_TOPIC_OBSTACLE", "world/pos/obstacle")
 TICK_SECONDS = float(os.getenv("WORLD_TICK_SECONDS", "1.0"))
 X_STEP = float(os.getenv("X_STEP_METERS", "2.0"))
 
 lead_x = float(os.getenv("LEAD_START_X", "50.0"))
 ego_x = float(os.getenv("EGO_START_X", "20.0"))
+OBSTACLE_X = float(os.getenv("OBSTACLE_X", "100.0"))
+OBSTACLE_Y = float(os.getenv("OBSTACLE_Y", "0.0"))
+SPEED = X_STEP / TICK_SECONDS
+WORLD_LENGTH = float(os.getenv("WORLD_LENGTH", "500.0"))
+LEAD_START_X = float(os.getenv("LEAD_START_X", "50.0"))
+EGO_START_X = float(os.getenv("EGO_START_X", "20.0"))
 
 
 def connect_client() -> mqtt.Client:
@@ -38,9 +45,12 @@ def connect_client() -> mqtt.Client:
                 raise
 
 
-def publish_position(client: mqtt.Client, topic: str, x_value: float) -> None:
+def publish_position(client: mqtt.Client, topic: str, x: float, y: float, heading: float, speed: float) -> None:
     payload = {
-        "x": x_value,
+        "x": x,
+        "y": y,
+        "heading": heading,
+        "speed": speed,
         "timestamp": time.time(),
     }
     client.publish(topic, json.dumps(payload), qos=1)
@@ -53,8 +63,14 @@ if __name__ == "__main__":
         lead_x += X_STEP
         ego_x += X_STEP
 
-        publish_position(client, TOPIC_LEAD, lead_x)
-        publish_position(client, TOPIC_EGO, ego_x)
+        if lead_x >= WORLD_LENGTH:
+            lead_x = LEAD_START_X
+            ego_x = EGO_START_X
+            print("--- WORLD LOOP RESET ---")
 
-        print(f"tick lead_x={lead_x:.2f} ego_x={ego_x:.2f}")
+        publish_position(client, TOPIC_LEAD, lead_x, 0.0, 0.0, SPEED)
+        publish_position(client, TOPIC_EGO, ego_x, 0.0, 0.0, SPEED)
+        publish_position(client, TOPIC_OBSTACLE, OBSTACLE_X, OBSTACLE_Y, 0.0, 0.0)
+
+        print(f"tick lead_x={lead_x:.2f} ego_x={ego_x:.2f} obstacle=({OBSTACLE_X:.2f},{OBSTACLE_Y:.2f})")
         time.sleep(TICK_SECONDS)

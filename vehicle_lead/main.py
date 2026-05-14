@@ -13,14 +13,19 @@ MAIN_BROKER_PORT = int(os.getenv("MAIN_BROKER_PORT", "1883"))
 LEAD_BROKER_HOST = os.getenv("LEAD_BROKER_HOST", "lead-broker")
 LEAD_BROKER_PORT = int(os.getenv("LEAD_BROKER_PORT", "1883"))
 TOPIC_WORLD_LEAD = os.getenv("WORLD_TOPIC_LEAD", "world/pos/lead")
+TOPIC_WORLD_OBSTACLE = os.getenv("WORLD_TOPIC_OBSTACLE", "world/pos/obstacle")
 TOPIC_CAM_IN = os.getenv("CAM_IN_TOPIC", "vanetza/in/cam")
 TOPIC_CAM_TIME = os.getenv("CAM_TIME_TOPIC", "vanetza/time/cam")
+TOPIC_CPM_IN = os.getenv("CPM_IN_TOPIC", "vanetza/in/cpm")
 BASE_LAT = float(os.getenv("LEAD_LATITUDE", "40.628300"))
 BASE_LON = float(os.getenv("LEAD_LONGITUDE", "-8.654400"))
+FOV_RANGE_M = float(os.getenv("LEAD_FOV_RANGE_M", "80.0"))
+FOV_HALF_ANGLE_DEG = float(os.getenv("LEAD_FOV_HALF_ANGLE_DEG", "60.0"))
 
 
 state_lock = threading.Lock()
-lead_x = 50.0
+lead_state: dict[str, Any] = {"x": 50.0, "y": 0.0, "heading": 0.0, "speed": 0.0}
+world_objects: dict[str, dict[str, Any]] = {}
 
 
 def meters_to_deg_lon(meters: float, latitude_deg: float) -> float:
@@ -30,8 +35,38 @@ def meters_to_deg_lon(meters: float, latitude_deg: float) -> float:
     return meters / denom
 
 
-def build_cam_payload(x_meter: float) -> dict[str, Any]:
+def meters_to_deg_lat(meters: float) -> float:
+    return meters / 111320.0
+
+
+def objects_in_fov(vehicle_x: float, vehicle_y: float, heading_deg: float) -> list[dict[str, Any]]:
+    perceived = []
+    with state_lock:
+        objects_snapshot = dict(world_objects)
+    for obj_id, obj in objects_snapshot.items():
+        dx = obj["x"] - vehicle_x
+        dy = obj["y"] - vehicle_y
+        distance = math.sqrt(dx * dx + dy * dy)
+        if distance < 0.5 or distance > FOV_RANGE_M:
+            continue
+        obj_angle_deg = math.degrees(math.atan2(dy, dx))
+        rel_angle = (obj_angle_deg - heading_deg + 360.0) % 360.0
+        if rel_angle > 180.0:
+            rel_angle -= 360.0
+        if abs(rel_angle) <= FOV_HALF_ANGLE_DEG:
+            perceived.append({
+                "object_id": obj_id,
+                "x": obj["x"],
+                "y": obj["y"],
+                "distance_m": round(distance, 2),
+                "rel_angle_deg": round(rel_angle, 2),
+            })
+    return perceived
+
+
+def build_cam_payload(x_meter: float, y_meter: float = 0.0) -> dict[str, Any]:
     lon = BASE_LON + meters_to_deg_lon(x_meter, BASE_LAT)
+    lat = BASE_LAT + meters_to_deg_lat(y_meter)
     generation_delta_time = int((time.time() * 1000.0) % 65536)
 
     return {
@@ -39,7 +74,7 @@ def build_cam_payload(x_meter: float) -> dict[str, Any]:
             "basicContainer": {
                 "stationType": 5,
                 "referencePosition": {
-                    "latitude": BASE_LAT,
+                    "latitude": lat,
                     "longitude": lon,
                     "positionConfidenceEllipse": {
                         "semiMajorAxisLength": 4095,
@@ -117,18 +152,97 @@ def build_cam_payload(x_meter: float) -> dict[str, Any]:
     }
 
 
-def on_world_message(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
-    global lead_x
+def build_cpm_payload(lead_x: float, lead_y: float, perceived: list[dict[str, Any]]) -> dict[str, Any]:
+    lat = BASE_LAT + meters_to_deg_lat(lead_y)
+    lon = BASE_LON + meters_to_deg_lon(lead_x, BASE_LAT)
+    objects = []
+    for idx, obj in enumerate(perceived):
+        # xCoordinate = longitudinal (forward, +X in our world)
+        # yCoordinate = lateral (sideways, +Y in our world)
+        dx = round(obj["x"] - lead_x, 2)
+        dy = round(obj["y"] - lead_y, 2)
+        objects.append({
+            "objectId": idx + 1,
+            "sensorIdList": [1],
+            "measurementDeltaTime": 0,
+            "position": {
+                "xCoordinate": {"value": dx, "confidence": 1},
+                "yCoordinate": {"value": dy, "confidence": 1},
+            },
+            "velocity": {
+                "cartesianVelocity": {
+                    "xVelocity": {"value": 0.0, "confidence": 1},
+                    "yVelocity": {"value": 0.0, "confidence": 1},
+                }
+            },
+            "objectDimensionX": {"value": 2.0, "confidence": 1},
+            "objectDimensionY": {"value": 2.0, "confidence": 1},
+        })
+    return {
+        "managementContainer": {
+            "referenceTime": int((time.time() * 1000.0) % 65536),
+            "referencePosition": {
+                "latitude": lat,
+                "longitude": lon,
+                "positionConfidenceEllipse": {
+                    "semiMajorConfidence": 4095,
+                    "semiMajorOrientation": 0,
+                    "semiMinorConfidence": 4095,
+                },
+                "altitude": {"altitudeValue": 800001, "altitudeConfidence": 15},
+            },
+        },
+        "cpmContainers": [
+            {
+                "containerId": 3,
+                "containerData": [{
+                    "sensorId": 1,
+                    "sensorType": 1,
+                    "perceptionRegionShape": {
+                        "radial": {
+                            "range": int(FOV_RANGE_M),
+                            "horizontalOpeningAngleStart": int(90 - FOV_HALF_ANGLE_DEG),
+                            "horizontalOpeningAngleEnd": int(90 + FOV_HALF_ANGLE_DEG),
+                        }
+                    },
+                    "shadowingApplies": False,
+                }],
+            },
+            {
+                "containerId": 5,
+                "containerData": {
+                    "numberOfPerceivedObjects": len(objects),
+                    "perceivedObjects": objects,
+                },
+            },
+        ],
+    }
 
+
+def on_world_lead(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
-        new_x = float(payload["x"])
+        with state_lock:
+            lead_state["x"] = float(payload["x"])
+            lead_state["y"] = float(payload.get("y", 0.0))
+            lead_state["heading"] = float(payload.get("heading", 0.0))
+            lead_state["speed"] = float(payload.get("speed", 0.0))
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
-        print(f"world parse error: {exc}")
-        return
+        print(f"world lead parse error: {exc}")
 
-    with state_lock:
-        lead_x = new_x
+
+def on_world_obstacle(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+        with state_lock:
+            world_objects["obstacle"] = {
+                "x": float(payload["x"]),
+                "y": float(payload.get("y", 0.0)),
+                "heading": float(payload.get("heading", 0.0)),
+                "speed": float(payload.get("speed", 0.0)),
+            }
+    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        print(f"world obstacle parse error: {exc}")
 
 
 def _connect_with_retry(host: str, port: int, client_id: str) -> mqtt.Client:
@@ -155,8 +269,10 @@ def _connect_with_retry(host: str, port: int, client_id: str) -> mqtt.Client:
 
 def start_world_subscriber() -> mqtt.Client:
     client = _connect_with_retry(MAIN_BROKER_HOST, MAIN_BROKER_PORT, "vehicle-lead-world")
-    client.on_message = on_world_message
-    client.subscribe(TOPIC_WORLD_LEAD, qos=1)
+    client.message_callback_add(TOPIC_WORLD_LEAD, on_world_lead)
+    client.message_callback_add(TOPIC_WORLD_OBSTACLE, on_world_obstacle)
+    client.on_message = lambda c, u, m: None
+    client.subscribe([(TOPIC_WORLD_LEAD, 1), (TOPIC_WORLD_OBSTACLE, 1)])
     return client
 
 
@@ -166,18 +282,27 @@ def start_cam_publisher() -> mqtt.Client:
 
 
 if __name__ == "__main__":
-    start_world_subscriber()
+    world_client = start_world_subscriber()
     cam_client = start_cam_publisher()
 
     while True:
         with state_lock:
-            x_snapshot = lead_x
+            x_snapshot = lead_state["x"]
+            y_snapshot = lead_state["y"]
+            heading_snapshot = lead_state["heading"]
+
+        perceived = objects_in_fov(x_snapshot, y_snapshot, heading_snapshot)
+        if perceived:
+            print(f"FoV detected {len(perceived)} object(s): {perceived}")
+            cpm = build_cpm_payload(x_snapshot, y_snapshot, perceived)
+            cam_client.publish(TOPIC_CPM_IN, json.dumps(cpm), qos=1)
+            print(f"published CPM -> {TOPIC_CPM_IN} with {len(perceived)} object(s)")
 
         wave_ts = time.time()
         cam_client.publish(TOPIC_CAM_TIME, json.dumps({"test": {"wave_timestamp": wave_ts}}), qos=1)
 
-        cam = build_cam_payload(x_snapshot)
+        cam = build_cam_payload(x_snapshot, y_snapshot)
         cam_client.publish(TOPIC_CAM_IN, json.dumps(cam), qos=1)
 
-        print(f"published CAM x={x_snapshot:.2f} topic={TOPIC_CAM_IN}")
+        print(f"published CAM x={x_snapshot:.2f} perceived={len(perceived)}")
         time.sleep(1.0)

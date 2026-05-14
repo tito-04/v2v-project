@@ -75,7 +75,6 @@ services:
       lead-broker:
         condition: service_healthy
     networks:
-      - v2v_adhoc
       - mgmt_network
 
   ego-vanetza:
@@ -105,7 +104,6 @@ services:
       ego-broker:
         condition: service_healthy
     networks:
-      - v2v_adhoc
       - mgmt_network
 
   world-generator:
@@ -123,7 +121,11 @@ services:
       - WORLD_TICK_SECONDS=${WORLD_TICK_SECONDS:-1.0}
       - LEAD_START_X=${LEAD_START_X:-50.0}
       - EGO_START_X=${EGO_START_X:-20.0}
-      - X_STEP_METERS=${X_STEP_METERS:-2.0}
+      - X_STEP_METERS=${X_STEP_METERS:-5.0}
+      - WORLD_TOPIC_OBSTACLE=${WORLD_TOPIC_OBSTACLE:-world/pos/obstacle}
+      - OBSTACLE_X=${OBSTACLE_X:-200.0}
+      - OBSTACLE_Y=${OBSTACLE_Y:-0.0}
+      - WORLD_LENGTH=${WORLD_LENGTH:-500.0}
     depends_on:
       main-broker:
         condition: service_healthy
@@ -143,10 +145,14 @@ services:
       - LEAD_BROKER_HOST=${LEAD_BROKER_HOST:-lead-broker}
       - LEAD_BROKER_PORT=${LEAD_BROKER_PORT:-1883}
       - WORLD_TOPIC_LEAD=${WORLD_TOPIC_LEAD:-world/pos/lead}
+      - WORLD_TOPIC_OBSTACLE=${WORLD_TOPIC_OBSTACLE:-world/pos/obstacle}
       - CAM_IN_TOPIC=${CAM_IN_TOPIC:-vanetza/in/cam}
       - CAM_TIME_TOPIC=${CAM_TIME_TOPIC:-vanetza/time/cam}
       - LEAD_LATITUDE=${LEAD_LATITUDE:-40.628300}
       - LEAD_LONGITUDE=${LEAD_LONGITUDE:--8.654400}
+      - LEAD_FOV_RANGE_M=${LEAD_FOV_RANGE_M:-80.0}
+      - LEAD_FOV_HALF_ANGLE_DEG=${LEAD_FOV_HALF_ANGLE_DEG:-60.0}
+      - CPM_IN_TOPIC=${CPM_IN_TOPIC:-vanetza/in/cpm}
     depends_on:
       main-broker:
         condition: service_healthy
@@ -170,9 +176,12 @@ services:
       - LEAD_BROKER_HOST=${LEAD_BROKER_HOST:-lead-broker}
       - LEAD_BROKER_PORT=${LEAD_BROKER_PORT:-1883}
       - WORLD_TOPIC_EGO=${WORLD_TOPIC_EGO:-world/pos/ego}
+      - CPM_OUT_TOPIC=${CPM_OUT_TOPIC:-vanetza/out/cpm}
       - CAM_OUT_TOPIC=${CAM_OUT_TOPIC:-vanetza/out/cam}
       - CAM_TIME_TOPIC=${CAM_TIME_TOPIC:-vanetza/time/cam}
       - STALE_SECONDS=${STALE_SECONDS:-3.0}
+      - WORLD_BASE_LAT=${WORLD_BASE_LAT:-40.628300}
+      - WORLD_BASE_LON=${WORLD_BASE_LON:--8.654400}
       - UI_PORT=8080
     depends_on:
       main-broker:

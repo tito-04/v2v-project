@@ -2,27 +2,27 @@ import * as THREE from "./vendor/three.module.js";
 import { STLLoader } from "./vendor/stl-loader.js";
 
 let current = {
-  egoX: 20,
-  leadX: 50,
+  selfX: 20,
+  selfY: 0,
+  objects: {},
   stale: true,
   camRateHz: 0,
   camAge: null,
   camLatency: null,
-  stationId: null,
 };
 
 function applyState(payload) {
-  if (!payload || !payload.ego || !payload.lead || !payload.metrics) {
+  if (!payload || !payload.self || !payload.metrics) {
     return;
   }
 
-  current.egoX = payload.ego.x;
-  current.leadX = payload.lead.x;
+  current.selfX = payload.self.x;
+  current.selfY = payload.self.y ?? 0;
+  current.objects = payload.objects ?? {};
   current.stale = payload.metrics.stale;
   current.camRateHz = payload.metrics.cam_rate_hz;
   current.camAge = payload.metrics.last_cam_age_sec;
   current.camLatency = payload.metrics.last_cam_latency_sec ?? null;
-  current.stationId = payload.lead.station_id;
 }
 
 function connectStateSource() {
@@ -121,6 +121,25 @@ function init3d() {
   scene.add(egoCar);
   scene.add(leadCar);
 
+  const worldObjects = {}; // key → THREE.Mesh for world-source objects (obstacles)
+
+  // FoV cone for lead car (80 m range, ±60° half-angle)
+  const FOV_RANGE = 80;
+  const FOV_HALF_DEG = 60;
+  const fovShape = new THREE.Shape();
+  fovShape.moveTo(0, 0);
+  for (let i = 0; i <= 40; i++) {
+    const a = THREE.MathUtils.degToRad(-FOV_HALF_DEG + (i / 40) * FOV_HALF_DEG * 2);
+    fovShape.lineTo(Math.cos(a) * FOV_RANGE, Math.sin(a) * FOV_RANGE);
+  }
+  fovShape.lineTo(0, 0);
+  const fovGeo = new THREE.ShapeGeometry(fovShape);
+  const fovMat = new THREE.MeshBasicMaterial({ color: 0x4cc9f0, transparent: true, opacity: 0.13, side: THREE.DoubleSide });
+  const fovMesh = new THREE.Mesh(fovGeo, fovMat);
+  fovMesh.rotation.x = -Math.PI / 2;
+  fovMesh.position.y = 0.05;
+  scene.add(fovMesh);
+
   camera.position.set(-30, 45, 70);
   camera.lookAt(0, 0, 0);
 
@@ -140,15 +159,53 @@ function init3d() {
   function animate() {
     requestAnimationFrame(animate);
 
-    egoCar.position.x += (current.egoX - egoCar.position.x) * 0.15;
-    leadCar.position.x += (current.leadX - leadCar.position.x) * 0.15;
-    egoCar.position.z = laneOffsetZ;
-    leadCar.position.z = laneOffsetZ;
-    leadCar.material.color.set(current.stale ? 0xff4d6d : 0xff9f1c);
+    const camObj = Object.values(current.objects).find(o => o.source === "cam");
+    const leadX = camObj ? camObj.x : leadCar.position.x;
+    const leadY = camObj ? (camObj.y ?? 0) : 0;
+    const leadStale = camObj ? !!camObj.stale : true;
+
+    egoCar.position.x += (current.selfX - egoCar.position.x) * 0.15;
+    egoCar.position.z += (current.selfY - egoCar.position.z) * 0.15;
+    leadCar.position.x += (leadX - leadCar.position.x) * 0.15;
+    leadCar.position.z += (leadY - leadCar.position.z) * 0.15;
+    leadCar.material.color.set(leadStale ? 0xff4d6d : 0xff9f1c);
+
+    // Update FoV cone to follow lead car
+    fovMesh.position.x = leadCar.position.x;
+    fovMesh.position.z = leadCar.position.z;
+    const hasCpm = Object.values(current.objects).some(o => o.source === "cpm" && !o.stale);
+    fovMat.color.set(hasCpm ? 0x52b788 : 0x4cc9f0);
+    fovMat.opacity = hasCpm ? 0.28 : 0.13;
+
+    // Sync world objects (obstacles) as colored boxes by source
+    const worldEntries = Object.entries(current.objects).filter(([, o]) => o.source !== "cam");
+    const worldKeys = new Set(worldEntries.map(([k]) => k));
+    for (const key of Object.keys(worldObjects)) {
+      if (!worldKeys.has(key)) {
+        scene.remove(worldObjects[key]);
+        delete worldObjects[key];
+      }
+    }
+    for (const [key, obj] of worldEntries) {
+      if (!worldObjects[key]) {
+        const geo = new THREE.BoxGeometry(8, 5, 5);
+        const color = obj.source === "cpm" ? 0x52b788 : 0xe63946;
+        const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = 2.5;
+        scene.add(mesh);
+        worldObjects[key] = mesh;
+      }
+      // Update color dynamically (cpm=green, world=red, stale=grey)
+      const targetColor = obj.stale ? 0x888888 : (obj.source === "cpm" ? 0x52b788 : 0xe63946);
+      worldObjects[key].material.color.set(targetColor);
+      worldObjects[key].position.x += ((obj.x ?? 0) - worldObjects[key].position.x) * 0.15;
+      worldObjects[key].position.z += ((obj.y ?? 0) - worldObjects[key].position.z) * 0.15;
+    }
 
     const centerX = (egoCar.position.x + leadCar.position.x) / 2;
     camera.position.x += (centerX - 30 - camera.position.x) * 0.03;
-    camera.lookAt(centerX, 0, laneOffsetZ);
+    camera.lookAt(centerX, 0, (egoCar.position.z + leadCar.position.z) / 2);
 
     renderMetrics();
     renderer.render(scene, camera);
@@ -268,13 +325,23 @@ function renderMetrics() {
   const rateText = Number.isFinite(current.camRateHz) ? current.camRateHz.toFixed(2) : "0.00";
   const latencyText = current.camLatency == null ? "n/a" : `${current.camLatency.toFixed(2)}s`;
 
+  const objLines = Object.entries(current.objects).map(([key, obj]) => {
+    const staleFlag = obj.stale ? " [STALE]" : "";
+    const sid = obj.station_id != null ? ` sid=${obj.station_id}` : "";
+    const dist = obj.distance_m != null ? ` dist=${obj.distance_m.toFixed(1)}m` : "";
+    const from = obj.detected_by != null ? ` from=sid${obj.detected_by}` : "";
+    return `  ${key}${sid}  x=${(obj.x ?? 0).toFixed(1)} y=${(obj.y ?? 0).toFixed(1)}${dist}${from}  [${obj.source ?? "?"}]${staleFlag}`;
+  });
+  const cpmAlert = Object.values(current.objects).some(o => o.source === "cpm" && !o.stale)
+    ? "*** V2V DETECTION ACTIVE — obstacle received via CPM ***"
+    : "";
+
   document.getElementById("metrics").textContent = [
-    `Lead Station ID: ${current.stationId ?? "n/a"}`,
-    `CAM Rate: ${rateText} Hz`,
-    `Last CAM Age: ${ageText}`,
-    `CAM Latency: ${latencyText}`,
+    `CAM Rate: ${rateText} Hz  |  Age: ${ageText}  |  Latency: ${latencyText}`,
     `Stale: ${current.stale ? "yes" : "no"}`,
-  ].join("\n");
+    objLines.length ? `Objects (${objLines.length}):\n${objLines.join("\n")}` : "Objects: none",
+    cpmAlert,
+  ].filter(Boolean).join("\n");
 }
 
 init3d();

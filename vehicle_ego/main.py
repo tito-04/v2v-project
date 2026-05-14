@@ -16,11 +16,14 @@ EGO_BROKER_PORT = int(os.getenv("EGO_BROKER_PORT", "1883"))
 LEAD_BROKER_HOST = os.getenv("LEAD_BROKER_HOST", "lead-broker")
 LEAD_BROKER_PORT = int(os.getenv("LEAD_BROKER_PORT", "1883"))
 TOPIC_WORLD_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
+TOPIC_CPM_OUT = os.getenv("CPM_OUT_TOPIC", "vanetza/out/cpm")
 TOPIC_CAM_OUT = os.getenv("CAM_OUT_TOPIC", "vanetza/out/cam")
 TOPIC_CAM_TIME = os.getenv("CAM_TIME_TOPIC", "vanetza/time/cam")
 UI_PORT = int(os.getenv("UI_PORT", "8080"))
 STALE_SECONDS = float(os.getenv("STALE_SECONDS", "3.0"))
 CAM_TIME_MATCH_WINDOW = 3.0
+BASE_LAT = float(os.getenv("WORLD_BASE_LAT", "40.628300"))
+BASE_LON = float(os.getenv("WORLD_BASE_LON", "-8.654400"))
 
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -28,8 +31,8 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 state_lock = threading.Lock()
 state: dict[str, Any] = {
-    "ego": {"x": 20.0, "updated_at": 0.0},
-    "lead": {"x": 50.0, "lat": None, "lon": None, "updated_at": 0.0, "station_id": None},
+    "self": {"x": 20.0, "y": 0.0, "heading": 0.0, "speed": 0.0, "updated_at": 0.0},
+    "objects": {},
     "metrics": {"cam_rate_hz": 0.0, "last_cam_age_sec": None, "last_cam_latency_sec": None, "stale": True},
 }
 _cam_counter = 0
@@ -43,6 +46,10 @@ def meters_from_lon_delta(delta_lon: float, latitude: float) -> float:
     return delta_lon * 111320.0 * math.cos(math.radians(latitude))
 
 
+def meters_from_lat_delta(delta_lat: float) -> float:
+    return delta_lat * 111320.0
+
+
 def emit_state() -> None:
     with state_lock:
         payload = json.loads(json.dumps(state))
@@ -52,27 +59,31 @@ def emit_state() -> None:
 def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
-        x_value = float(payload["x"])
+        with state_lock:
+            state["self"]["x"] = float(payload["x"])
+            state["self"]["y"] = float(payload.get("y", 0.0))
+            state["self"]["heading"] = float(payload.get("heading", 0.0))
+            state["self"]["speed"] = float(payload.get("speed", 0.0))
+            state["self"]["updated_at"] = time.time()
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"world ego parse error: {exc}")
         return
 
-    with state_lock:
-        state["ego"]["x"] = x_value
-        state["ego"]["updated_at"] = time.time()
-
     emit_state()
 
 
-def parse_cam_payload(payload: dict[str, Any]) -> tuple[float, float, Any]:
+def parse_cam_payload(payload: dict[str, Any]) -> tuple[float, float, float, float, Any]:
     # Support both raw CAM JSON and wrapper formats like {"fields": {"header": ..., "cam": ...}}
     cam_root = payload.get("fields", {}).get("cam", payload)
     cam_params = cam_root.get("camParameters", {})
     basic = cam_params.get("basicContainer", {})
     ref_pos = basic.get("referencePosition", {})
+    hf = cam_params.get("highFrequencyContainer", {}).get("basicVehicleContainerHighFrequency", {})
 
     lat = float(ref_pos["latitude"])
     lon = float(ref_pos["longitude"])
+    heading = float(hf["heading"]["headingValue"]) if isinstance(hf.get("heading"), dict) else 0.0
+    speed = float(hf["speed"]["speedValue"]) if isinstance(hf.get("speed"), dict) else 0.0
     station_id = (
         payload.get("fields", {}).get("header", {}).get("stationId")
         or payload.get("stationID")
@@ -80,7 +91,47 @@ def parse_cam_payload(payload: dict[str, Any]) -> tuple[float, float, Any]:
         or payload.get("itsPduHeader", {}).get("stationId")
         or payload.get("header", {}).get("stationId")
     )
-    return lat, lon, station_id
+    return lat, lon, heading, speed, station_id
+
+
+def on_cpm_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    """Parse vanetza/out/cpm — ETSI TR103562 CPM received over GeoNet."""
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+        inner = payload.get("fields", {}).get("payload", {})
+        sender_id = payload.get("stationID") or payload.get("fields", {}).get("header", {}).get("stationId")
+
+        mgmt = inner.get("managementContainer", {})
+        ref = mgmt.get("referencePosition", {})
+        sender_lat = float(ref["latitude"])
+        sender_lon = float(ref["longitude"])
+        sender_x = meters_from_lon_delta(sender_lon - BASE_LON, sender_lat)
+        sender_y = meters_from_lat_delta(sender_lat - BASE_LAT)
+
+        now = time.time()
+        with state_lock:
+            for container in inner.get("cpmContainers", []):
+                if container.get("containerId") != 5:
+                    continue
+                for obj in container.get("containerData", {}).get("perceivedObjects", []):
+                    obj_id = obj.get("objectId", 0)
+                    pos = obj.get("position", {})
+                    dx = float(pos.get("xCoordinate", {}).get("value", 0.0))
+                    dy = float(pos.get("yCoordinate", {}).get("value", 0.0))
+                    key = f"cpm_{obj_id}"
+                    state["objects"][key] = {
+                        "x": sender_x + dx,
+                        "y": sender_y + dy,
+                        "source": "cpm",
+                        "detected_by": sender_id,
+                        "updated_at": now,
+                        "stale": False,
+                    }
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        print(f"cpm out parse error: {exc}")
+        return
+
+    emit_state()
 
 
 def on_cam_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
@@ -89,7 +140,7 @@ def on_cam_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
 
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
-        lat, lon, station_id = parse_cam_payload(payload)
+        lat, lon, heading, speed, station_id = parse_cam_payload(payload)
     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         print(f"cam parse error: {exc}")
         return
@@ -101,14 +152,21 @@ def on_cam_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
             if 0 <= latency <= CAM_TIME_MATCH_WINDOW:
                 state["metrics"]["last_cam_latency_sec"] = latency
 
-        base_lon = -8.6544
-        lead_x = meters_from_lon_delta(lon - base_lon, lat)
-
-        state["lead"]["x"] = lead_x
-        state["lead"]["lat"] = lat
-        state["lead"]["lon"] = lon
-        state["lead"]["updated_at"] = time.time()
-        state["lead"]["station_id"] = station_id
+        x = meters_from_lon_delta(lon - BASE_LON, lat)
+        y = meters_from_lat_delta(lat - BASE_LAT)
+        obj_key = f"cam_{station_id}" if station_id is not None else "cam_unknown"
+        state["objects"][obj_key] = {
+            "x": x,
+            "y": y,
+            "lat": lat,
+            "lon": lon,
+            "heading": heading,
+            "speed": speed,
+            "source": "cam",
+            "station_id": station_id,
+            "updated_at": time.time(),
+            "stale": False,
+        }
 
         now = time.time()
         elapsed = max(now - _cam_window_start, 1e-6)
@@ -144,16 +202,21 @@ def on_cam_default(_client: mqtt.Client, _userdata: Any, _msg: mqtt.MQTTMessage)
 def monitor_stale_loop() -> None:
     while True:
         with state_lock:
-            lead_updated = state["lead"]["updated_at"]
-            if lead_updated <= 0:
-                age = None
-                stale = True
-            else:
-                age = max(time.time() - lead_updated, 0.0)
-                stale = age > STALE_SECONDS
+            now = time.time()
+            cam_ages: list[float] = []
+            for obj in state["objects"].values():
+                age = max(now - obj["updated_at"], 0.0)
+                obj["stale"] = age > STALE_SECONDS
+                if obj["source"] == "cam":
+                    cam_ages.append(age)
 
-            state["metrics"]["last_cam_age_sec"] = age
-            state["metrics"]["stale"] = stale
+            if cam_ages:
+                oldest = max(cam_ages)
+                state["metrics"]["last_cam_age_sec"] = oldest
+                state["metrics"]["stale"] = oldest > STALE_SECONDS
+            else:
+                state["metrics"]["last_cam_age_sec"] = None
+                state["metrics"]["stale"] = True
 
         emit_state()
         time.sleep(0.5)
@@ -183,13 +246,16 @@ def _connect_with_retry(host: str, port: int, client_id: str) -> mqtt.Client:
 
 def start_mqtt() -> None:
     world_client = _connect_with_retry(MAIN_BROKER_HOST, MAIN_BROKER_PORT, "vehicle-ego-world")
-    world_client.on_message = on_world_ego
+    world_client.on_message = on_cam_default
+    world_client.message_callback_add(TOPIC_WORLD_EGO, on_world_ego)
     world_client.subscribe(TOPIC_WORLD_EGO, qos=1)
 
     cam_client = _connect_with_retry(EGO_BROKER_HOST, EGO_BROKER_PORT, "vehicle-ego-cam")
     cam_client.on_message = on_cam_default
     cam_client.message_callback_add(TOPIC_CAM_OUT, on_cam_out)
+    cam_client.message_callback_add(TOPIC_CPM_OUT, on_cpm_out)
     cam_client.subscribe(TOPIC_CAM_OUT, qos=1)
+    cam_client.subscribe(TOPIC_CPM_OUT, qos=1)
 
     time_client = _connect_with_retry(LEAD_BROKER_HOST, LEAD_BROKER_PORT, "vehicle-ego-time")
     time_client.on_message = on_cam_time

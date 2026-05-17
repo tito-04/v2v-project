@@ -23,6 +23,12 @@ BASE_LON = float(os.getenv("LEAD_LONGITUDE", "-8.654400"))
 FOV_RANGE_M = float(os.getenv("LEAD_FOV_RANGE_M", "80.0"))
 FOV_HALF_ANGLE_DEG = float(os.getenv("LEAD_FOV_HALF_ANGLE_DEG", "60.0"))
 
+# Building occluder rectangle (SW corner of intersection)
+BUILDING_X1 = float(os.getenv("BUILDING_X1", "188"))
+BUILDING_Y1 = float(os.getenv("BUILDING_Y1", "-34"))
+BUILDING_X2 = float(os.getenv("BUILDING_X2", "196"))
+BUILDING_Y2 = float(os.getenv("BUILDING_Y2", "-4"))
+
 
 state_lock = threading.Lock()
 lead_state: dict[str, Any] = {"x": 50.0, "y": 0.0, "heading": 0.0, "speed": 0.0}
@@ -40,6 +46,45 @@ def meters_to_deg_lat(meters: float) -> float:
     return meters / 111320.0
 
 
+def segment_intersects_rect(
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    rx1: float, ry1: float, rx2: float, ry2: float,
+) -> bool:
+    """Return True if segment p1→p2 intersects or passes through the AABB [rx1,rx2]×[ry1,ry2]."""
+    # Normalise rect so min/max are correct regardless of sign
+    xmin, xmax = min(rx1, rx2), max(rx1, rx2)
+    ymin, ymax = min(ry1, ry2), max(ry1, ry2)
+
+    # If either endpoint is inside the rect the LOS starts/ends inside — occluded
+    def inside(p: tuple[float, float]) -> bool:
+        return xmin <= p[0] <= xmax and ymin <= p[1] <= ymax
+
+    if inside(p1) or inside(p2):
+        return True
+
+    # Liang-Barsky parametric clip
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    t_enter, t_exit = 0.0, 1.0
+
+    for p_val, q_val in (
+        (-dx, p1[0] - xmin),
+        (dx, xmax - p1[0]),
+        (-dy, p1[1] - ymin),
+        (dy, ymax - p1[1]),
+    ):
+        if p_val == 0.0:
+            if q_val < 0.0:
+                return False  # parallel and outside
+        elif p_val < 0.0:
+            t_enter = max(t_enter, q_val / p_val)
+        else:
+            t_exit = min(t_exit, q_val / p_val)
+
+    return t_enter <= t_exit
+
+
 def objects_in_fov(vehicle_x: float, vehicle_y: float, heading_deg: float) -> list[dict[str, Any]]:
     perceived = []
     with state_lock:
@@ -55,6 +100,12 @@ def objects_in_fov(vehicle_x: float, vehicle_y: float, heading_deg: float) -> li
         if rel_angle > 180.0:
             rel_angle -= 360.0
         if abs(rel_angle) <= FOV_HALF_ANGLE_DEG:
+            # Occlusion check: skip objects whose LOS is blocked by the building
+            if segment_intersects_rect(
+                (vehicle_x, vehicle_y), (obj["x"], obj["y"]),
+                BUILDING_X1, BUILDING_Y1, BUILDING_X2, BUILDING_Y2,
+            ):
+                continue
             perceived.append({
                 "object_id": obj_id,
                 "x": obj["x"],

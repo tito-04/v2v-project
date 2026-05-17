@@ -29,6 +29,13 @@ BASE_LON = float(os.getenv("WORLD_BASE_LON", "-8.654400"))
 FOV_RANGE_M = 80.0
 FOV_HALF_ANGLE_DEG = 60.0
 
+# Building occluder rectangle (SW corner of intersection)
+BUILDING_X1 = float(os.getenv("BUILDING_X1", "188"))
+BUILDING_Y1 = float(os.getenv("BUILDING_Y1", "-34"))
+BUILDING_X2 = float(os.getenv("BUILDING_X2", "196"))
+BUILDING_Y2 = float(os.getenv("BUILDING_Y2", "-4"))
+BUILDING = (BUILDING_X1, BUILDING_Y1, BUILDING_X2, BUILDING_Y2)
+
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
@@ -54,14 +61,51 @@ def meters_from_lat_delta(delta_lat: float) -> float:
     return delta_lat * 111320.0
 
 
+def segment_intersects_rect(
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    rx1: float, ry1: float, rx2: float, ry2: float,
+) -> bool:
+    """Return True if segment p1→p2 is blocked by AABB [rx1,rx2]×[ry1,ry2]."""
+    xmin, xmax = min(rx1, rx2), max(rx1, rx2)
+    ymin, ymax = min(ry1, ry2), max(ry1, ry2)
+
+    def inside(p: tuple[float, float]) -> bool:
+        return xmin <= p[0] <= xmax and ymin <= p[1] <= ymax
+
+    if inside(p1) or inside(p2):
+        return True
+
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    t_enter, t_exit = 0.0, 1.0
+
+    for p_val, q_val in (
+        (-dx, p1[0] - xmin),
+        (dx, xmax - p1[0]),
+        (-dy, p1[1] - ymin),
+        (dy, ymax - p1[1]),
+    ):
+        if p_val == 0.0:
+            if q_val < 0.0:
+                return False
+        elif p_val < 0.0:
+            t_enter = max(t_enter, q_val / p_val)
+        else:
+            t_exit = min(t_exit, q_val / p_val)
+
+    return t_enter <= t_exit
+
+
 def emit_state() -> None:
     with state_lock:
         payload = json.loads(json.dumps(state))
     socketio.emit("state_update", payload)
 
 
-def is_in_fov(vehicle_x: float, vehicle_y: float, vehicle_heading: float, obj_x: float, obj_y: float, fov_range: float, fov_half_angle: float) -> bool:
-    """Check if object is within vehicle's field of view cone."""
+def is_in_fov(vehicle_x: float, vehicle_y: float, vehicle_heading: float, obj_x: float, obj_y: float, fov_range: float, fov_half_angle: float,
+              building: tuple[float, float, float, float] | None = None) -> bool:
+    """Check if object is within vehicle's field of view cone, with optional occlusion rect."""
     import math
     
     # Calculate relative position
@@ -73,8 +117,6 @@ def is_in_fov(vehicle_x: float, vehicle_y: float, vehicle_heading: float, obj_x:
     if distance > fov_range:
         return False
     
-    # For simplicity, assume heading of 0° = +X direction, and cone is centered on that
-    # Angle from vehicle to object (in world coordinates)
     if distance < 0.1:  # Avoid division by zero
         return True
     
@@ -84,7 +126,15 @@ def is_in_fov(vehicle_x: float, vehicle_y: float, vehicle_heading: float, obj_x:
         angle_diff = 360 - angle_diff
     
     # Check if within cone angle
-    return angle_diff <= fov_half_angle
+    in_cone = angle_diff <= fov_half_angle
+    if not in_cone:
+        return False
+    # Occlusion check
+    if building is not None:
+        bx1, by1, bx2, by2 = building
+        if segment_intersects_rect((vehicle_x, vehicle_y), (obj_x, obj_y), bx1, by1, bx2, by2):
+            return False
+    return True
 
 
 def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
@@ -103,7 +153,7 @@ def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) ->
                     obj_data["in_ego_fov"] = is_in_fov(
                         state["self"]["x"], state["self"]["y"], state["self"]["heading"],
                         obj_data["x"], obj_data["y"],
-                        FOV_RANGE_M, FOV_HALF_ANGLE_DEG
+                        FOV_RANGE_M, FOV_HALF_ANGLE_DEG, building=BUILDING
                     )
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"world ego parse error: {exc}")
@@ -130,7 +180,7 @@ def on_world_lead(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -
                 "in_ego_fov": is_in_fov(
                     state["self"]["x"], state["self"]["y"], state["self"]["heading"],
                     lead_x, lead_y,
-                    FOV_RANGE_M, FOV_HALF_ANGLE_DEG
+                    FOV_RANGE_M, FOV_HALF_ANGLE_DEG, building=BUILDING
                 ),
             }
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
@@ -163,7 +213,7 @@ def on_world_obstacle(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessag
                 "in_ego_fov": is_in_fov(
                     state["self"]["x"], state["self"]["y"], state["self"]["heading"],
                     x, y,
-                    FOV_RANGE_M, FOV_HALF_ANGLE_DEG
+                    FOV_RANGE_M, FOV_HALF_ANGLE_DEG, building=BUILDING
                 ),
             }
     except (ValueError, KeyError, json.JSONDecodeError) as exc:

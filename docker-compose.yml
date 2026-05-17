@@ -118,19 +118,20 @@ services:
       - MAIN_BROKER_PORT=${MAIN_BROKER_PORT:-1883}
       - WORLD_TOPIC_LEAD=${WORLD_TOPIC_LEAD:-world/pos/lead}
       - WORLD_TOPIC_EGO=${WORLD_TOPIC_EGO:-world/pos/ego}
-      - WORLD_TICK_SECONDS=${WORLD_TICK_SECONDS:-1.0}
-      - LEAD_START_X=${LEAD_START_X:-50.0}
-      - EGO_START_X=${EGO_START_X:-20.0}
-      - X_STEP_METERS=${X_STEP_METERS:-5.0}
       - WORLD_TOPIC_OBSTACLE=${WORLD_TOPIC_OBSTACLE:-world/pos/obstacle}
-      - NUM_OBSTACLES=${NUM_OBSTACLES:-3}
-      - OBSTACLE_1_X=${OBSTACLE_1_X:-100}
-      - OBSTACLE_1_Y=${OBSTACLE_1_Y:-0}
-      - OBSTACLE_2_X=${OBSTACLE_2_X:-200}
-      - OBSTACLE_2_Y=${OBSTACLE_2_Y:-0}
-      - OBSTACLE_3_X=${OBSTACLE_3_X:-300}
-      - OBSTACLE_3_Y=${OBSTACLE_3_Y:-0}
-      - WORLD_LENGTH=${WORLD_LENGTH:-500.0}
+      - WORLD_TICK_SECONDS=${WORLD_TICK_SECONDS:-1.0}
+      - X_STEP_METERS=${X_STEP_METERS:-2.0}
+      - INTERSECTION_X=${INTERSECTION_X:-200}
+      - INTERSECTION_Y=${INTERSECTION_Y:-0}
+      - LANE_W=${LANE_W:-4}
+      - EGO_START_X=${EGO_START_X:-20}
+      - EGO_START_Y=${EGO_START_Y:--4}
+      - LEAD_START_X=${LEAD_START_X:-204}
+      - LEAD_START_Y=${LEAD_START_Y:-200}
+      - WORLD_LENGTH_S=${WORLD_LENGTH_S:-200}
+      - NUM_OBSTACLES=${NUM_OBSTACLES:-1}
+      - OBSTACLE_1_X=${OBSTACLE_1_X:-204}
+      - OBSTACLE_1_Y=${OBSTACLE_1_Y:--14}
     depends_on:
       main-broker:
         condition: service_healthy
@@ -150,14 +151,19 @@ services:
       - LEAD_BROKER_HOST=${LEAD_BROKER_HOST:-lead-broker}
       - LEAD_BROKER_PORT=${LEAD_BROKER_PORT:-1883}
       - WORLD_TOPIC_LEAD=${WORLD_TOPIC_LEAD:-world/pos/lead}
+      - WORLD_TOPIC_EGO=${WORLD_TOPIC_EGO:-world/pos/ego}
       - WORLD_TOPIC_OBSTACLE=${WORLD_TOPIC_OBSTACLE:-world/pos/obstacle}
       - CAM_IN_TOPIC=${CAM_IN_TOPIC:-vanetza/in/cam}
       - CAM_TIME_TOPIC=${CAM_TIME_TOPIC:-vanetza/time/cam}
+      - CPM_IN_TOPIC=${CPM_IN_TOPIC:-vanetza/in/cpm}
       - LEAD_LATITUDE=${LEAD_LATITUDE:-40.628300}
       - LEAD_LONGITUDE=${LEAD_LONGITUDE:--8.654400}
       - LEAD_FOV_RANGE_M=${LEAD_FOV_RANGE_M:-80.0}
       - LEAD_FOV_HALF_ANGLE_DEG=${LEAD_FOV_HALF_ANGLE_DEG:-60.0}
-      - CPM_IN_TOPIC=${CPM_IN_TOPIC:-vanetza/in/cpm}
+      - BUILDING_X1=${BUILDING_X1:-188}
+      - BUILDING_Y1=${BUILDING_Y1:--34}
+      - BUILDING_X2=${BUILDING_X2:-196}
+      - BUILDING_Y2=${BUILDING_Y2:--4}
     depends_on:
       main-broker:
         condition: service_healthy
@@ -181,6 +187,7 @@ services:
       - LEAD_BROKER_HOST=${LEAD_BROKER_HOST:-lead-broker}
       - LEAD_BROKER_PORT=${LEAD_BROKER_PORT:-1883}
       - WORLD_TOPIC_EGO=${WORLD_TOPIC_EGO:-world/pos/ego}
+      - WORLD_TOPIC_LEAD=${WORLD_TOPIC_LEAD:-world/pos/lead}
       - WORLD_TOPIC_OBSTACLE=${WORLD_TOPIC_OBSTACLE:-world/pos/obstacle}
       - CPM_OUT_TOPIC=${CPM_OUT_TOPIC:-vanetza/out/cpm}
       - CAM_OUT_TOPIC=${CAM_OUT_TOPIC:-vanetza/out/cam}
@@ -188,6 +195,10 @@ services:
       - STALE_SECONDS=${STALE_SECONDS:-3.0}
       - WORLD_BASE_LAT=${WORLD_BASE_LAT:-40.628300}
       - WORLD_BASE_LON=${WORLD_BASE_LON:--8.654400}
+      - BUILDING_X1=${BUILDING_X1:-188}
+      - BUILDING_Y1=${BUILDING_Y1:--34}
+      - BUILDING_X2=${BUILDING_X2:-196}
+      - BUILDING_Y2=${BUILDING_Y2:--4}
       - UI_PORT=8080
     depends_on:
       main-broker:

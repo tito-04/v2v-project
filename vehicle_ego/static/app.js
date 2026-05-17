@@ -80,41 +80,91 @@ function init3d() {
   }
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 5000);
+  scene.background = new THREE.Color(0x0e1117);
+  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 5000);
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.getElementById("scene").appendChild(renderer.domElement);
 
-  scene.fog = new THREE.FogExp2(0x05070c, 0.0009);
-
-  const hemiLight = new THREE.HemisphereLight(0x88aaff, 0x1f1f1f, 1.1);
-  scene.add(hemiLight);
-
-  const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-  dirLight.position.set(40, 80, 30);
+  // No fog — top-down view must see the full scene
+  const ambientLight = new THREE.AmbientLight(0xffffff, 2.8);
+  scene.add(ambientLight);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+  dirLight.position.set(0, 500, 0); // straight down for top-down view
   scene.add(dirLight);
 
+  // E-W road — 16 m wide (2 × 8 m lanes), centred at z=0
   const road = new THREE.Mesh(
-    new THREE.PlaneGeometry(3000, 120),
+    new THREE.PlaneGeometry(3000, 16),
     new THREE.MeshStandardMaterial({ color: 0x2f3136, roughness: 0.95, metalness: 0.02 })
   );
   road.rotation.x = -Math.PI / 2;
   road.position.y = -0.01;
   scene.add(road);
 
+  // N-S road — 16 m wide (2 × 8 m lanes), centred at x=200 (intersection centre)
+  const nsRoad = new THREE.Mesh(
+    new THREE.PlaneGeometry(16, 3000),
+    new THREE.MeshStandardMaterial({ color: 0x2f3136, roughness: 0.95, metalness: 0.02 })
+  );
+  nsRoad.rotation.x = -Math.PI / 2;
+  nsRoad.position.x = 200;
+  nsRoad.position.y = -0.005;
+  scene.add(nsRoad);
+
+  // Building (SW corner occluder): world x∈[188,196], y∈[-34,-4]
+  // world.y maps DIRECTLY to Three.js z — no negation
+  const bx1 = 188, by1 = -34, bx2 = 196, by2 = -4;
+  const building = new THREE.Mesh(
+    new THREE.BoxGeometry(bx2 - bx1, 10, Math.abs(by2 - by1)),
+    new THREE.MeshStandardMaterial({ color: 0x6b5c4a, roughness: 0.9, metalness: 0.1 })
+  );
+  building.position.x = (bx1 + bx2) / 2; // 192
+  building.position.y = 5;
+  building.position.z = (by1 + by2) / 2;  // -19 — south of intersection (FIXED)
+  scene.add(building);
+
+  // E-W centre lane line (dashed yellow)
   const laneLine = new THREE.Mesh(
-    new THREE.PlaneGeometry(3000, 2),
-    new THREE.MeshStandardMaterial({
-      map: createDashTexture(),
-      transparent: true,
-      roughness: 0.7,
-      metalness: 0.1,
-    })
+    new THREE.PlaneGeometry(3000, 1.2),
+    new THREE.MeshBasicMaterial({ map: createDashTexture(), transparent: true })
   );
   laneLine.rotation.x = -Math.PI / 2;
   laneLine.position.y = 0.02;
   scene.add(laneLine);
 
-  const laneOffsetZ = 20;
+  // N-S centre lane line (dashed yellow, running along Z)
+  const nsLaneLine = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.2, 3000),
+    new THREE.MeshBasicMaterial({ map: createDashTexture(), transparent: true })
+  );
+  nsLaneLine.rotation.x = -Math.PI / 2;
+  nsLaneLine.position.x = 200;
+  nsLaneLine.position.y = 0.02;
+  scene.add(nsLaneLine);
+
+  // Road edge lines (solid white) — E-W at z=±8
+  for (const ez of [-8, 8]) {
+    const e = new THREE.Mesh(
+      new THREE.PlaneGeometry(3000, 0.4),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 })
+    );
+    e.rotation.x = -Math.PI / 2;
+    e.position.z = ez;
+    e.position.y = 0.03;
+    scene.add(e);
+  }
+
+  // Road edge lines (solid white) — N-S at x=192 and x=208
+  for (const ex of [192, 208]) {
+    const e = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.4, 3000),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 })
+    );
+    e.rotation.x = -Math.PI / 2;
+    e.position.x = ex;
+    e.position.y = 0.03;
+    scene.add(e);
+  }
 
   addRoadsideTrees(scene);
 
@@ -138,9 +188,13 @@ function init3d() {
   const fovGeo = new THREE.ShapeGeometry(fovShape);
   const fovMat = new THREE.MeshBasicMaterial({ color: 0x4cc9f0, transparent: true, opacity: 0.13, side: THREE.DoubleSide });
   const fovMesh = new THREE.Mesh(fovGeo, fovMat);
-  fovMesh.rotation.x = -Math.PI / 2;
-  fovMesh.position.y = 0.05;
-  scene.add(fovMesh);
+  // Wrap in a Group so rotation.x (tilt flat) and heading (rotation.z in group space)
+  // are independent — avoids Euler XYZ gimbal composition bug.
+  const fovGroup = new THREE.Group();
+  fovGroup.rotation.x = -Math.PI / 2; // lie flat on ground, permanent
+  fovGroup.position.y = 0.05;
+  fovGroup.add(fovMesh);
+  scene.add(fovGroup);
 
   // FoV cone for ego car (same 80 m range, ±60° half-angle)
   const egoFovShape = new THREE.Shape();
@@ -153,12 +207,14 @@ function init3d() {
   const egoFovGeo = new THREE.ShapeGeometry(egoFovShape);
   const egoFovMat = new THREE.MeshBasicMaterial({ color: 0x52b788, transparent: true, opacity: 0.13, side: THREE.DoubleSide });
   const egoFovMesh = new THREE.Mesh(egoFovGeo, egoFovMat);
-  egoFovMesh.rotation.x = -Math.PI / 2;
-  egoFovMesh.position.y = 0.05;
-  scene.add(egoFovMesh);
+  const egoFovGroup = new THREE.Group();
+  egoFovGroup.rotation.x = -Math.PI / 2;
+  egoFovGroup.position.y = 0.05;
+  egoFovGroup.add(egoFovMesh);
+  scene.add(egoFovGroup);
 
-  camera.position.set(-30, 45, 70);
-  camera.lookAt(0, 0, 0);
+  camera.position.set(200, 350, -120);
+  camera.lookAt(200, 0, 60);
 
   connectStateSource();
 
@@ -180,27 +236,34 @@ function init3d() {
     const leadX = camObj ? camObj.x : leadCar.position.x;
     const leadY = camObj ? (camObj.y ?? 0) : 0;
     const leadStale = camObj ? !!camObj.stale : true;
+    const leadHeading = camObj ? (camObj.heading ?? 0) : 0;
 
     egoCar.position.x += (current.selfX - egoCar.position.x) * 0.15;
     egoCar.position.z += (current.selfY - egoCar.position.z) * 0.15;
+    egoCar.rotation.y = Math.PI - THREE.MathUtils.degToRad(current.selfHeading ?? 0);
     leadCar.position.x += (leadX - leadCar.position.x) * 0.15;
     leadCar.position.z += (leadY - leadCar.position.z) * 0.15;
+    leadCar.rotation.y = Math.PI - THREE.MathUtils.degToRad(leadHeading);
     leadCar.material.color.set(leadStale ? 0xff4d6d : 0xff9f1c);
 
-    // Update FoV cone to follow lead car
-    fovMesh.position.x = leadCar.position.x;
-    fovMesh.position.z = leadCar.position.z;
+    // Update FoV cone to follow lead car and rotate with heading
+    // rotation.z in group-local space == rotation around world Y (heading) because
+    // group.rotation.x = -PI/2 maps group's +Z to world +Y.
+    fovGroup.position.x = leadCar.position.x;
+    fovGroup.position.z = leadCar.position.z;
+    fovMesh.rotation.z = Math.PI - THREE.MathUtils.degToRad(leadHeading);
     const hasCpm = Object.values(current.objects).some(o => o.source === "cpm" && !o.stale);
     fovMat.color.set(hasCpm ? 0x52b788 : 0x4cc9f0);
     fovMat.opacity = hasCpm ? 0.28 : 0.13;
 
-    // Update FoV cone to follow ego car
-    egoFovMesh.position.x = egoCar.position.x;
-    egoFovMesh.position.z = egoCar.position.z;
+    // Update FoV cone to follow ego car and rotate with heading
+    egoFovGroup.position.x = egoCar.position.x;
+    egoFovGroup.position.z = egoCar.position.z;
+    egoFovMesh.rotation.z = Math.PI - THREE.MathUtils.degToRad(current.selfHeading ?? 0);
     // Cone color updates later based on detection of any object in FoV
 
-    // Sync world objects (obstacles) as colored boxes by source
-    const worldEntries = Object.entries(current.objects).filter(([, o]) => o.source !== "cam");
+    // Sync world objects (obstacles) — lead_car excluded (rendered as vehicle mesh)
+    const worldEntries = Object.entries(current.objects).filter(([, o]) => o.source !== "cam" && o.source !== "lead_car");
     const worldKeys = new Set(worldEntries.map(([k]) => k));
     for (const key of Object.keys(worldObjects)) {
       if (!worldKeys.has(key)) {
@@ -210,38 +273,30 @@ function init3d() {
     }
     for (const [key, obj] of worldEntries) {
       if (!worldObjects[key]) {
-        const geo = new THREE.BoxGeometry(8, 5, 5);
-        // Color by source: CPM=green, world obstacles=red, lead_car=orange
-        let color = 0xe63946;  // default red for obstacles
-        if (obj.source === "cpm") color = 0x52b788;  // green
-        else if (obj.source === "lead_car") color = 0xffa500;  // orange
-        
-        const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1, transparent: true });
+        // Flat disc — clearly visible from top-down
+        const geo = new THREE.CylinderGeometry(3, 3, 1, 24);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff2200 });
         const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.y = 2.5;
+        mesh.position.y = 0.5;
         scene.add(mesh);
         worldObjects[key] = mesh;
       }
-      
-      // Update color and opacity dynamically
-      let targetColor = 0xe63946;  // default red
-      if (obj.stale) {
-        targetColor = 0x888888;  // grey when stale
-      } else if (obj.source === "cpm") {
-        targetColor = 0x52b788;  // green for CPM
-      } else if (obj.source === "lead_car") {
-        targetColor = 0xffa500;  // orange for lead car
-      }
-      
-      worldObjects[key].material.color.set(targetColor);
-      // Apply transparency based on FoV detection (ego or lead)
-      if ("in_ego_fov" in obj || "in_lead_fov" in obj) {
-        const inEgoFov = obj.in_ego_fov === true;
-        const inLeadFov = obj.in_lead_fov === true;
-        worldObjects[key].material.opacity = (inEgoFov || inLeadFov) ? 0.85 : 0.25;
-      } else {
-        worldObjects[key].material.opacity = 0.75;  // default opacity for objects without FoV tracking
-      }
+
+      // Detection-based colour (MeshBasicMaterial — always bright):
+      //   grey   = stale
+      //   red    = in world, nobody detects it (occluded by building)
+      //   orange = lead FoV detected (CPM will be sent)
+      //   green  = ego detects directly
+      //   cyan   = CPM object forwarded by vanetza
+      const inEgo  = obj.in_ego_fov  === true;
+      const inLead = obj.in_lead_fov === true;
+      let obsColor;
+      if (obj.stale)                obsColor = 0x888888;
+      else if (obj.source === "cpm") obsColor = 0x00eeff;
+      else if (inEgo)               obsColor = 0x00ff44;
+      else if (inLead)              obsColor = 0xffaa00;
+      else                          obsColor = 0xff2200;
+      worldObjects[key].material.color.set(obsColor);
       
       worldObjects[key].position.x += ((obj.x ?? 0) - worldObjects[key].position.x) * 0.15;
       worldObjects[key].position.z += ((obj.y ?? 0) - worldObjects[key].position.z) * 0.15;
@@ -252,11 +307,16 @@ function init3d() {
     egoFovMat.color.set(hasAnyDetection ? 0x52b788 : 0x2ec4b6);
     egoFovMat.opacity = hasAnyDetection ? 0.28 : 0.13;
 
-    const centerX = (egoCar.position.x + leadCar.position.x) / 2;
-    camera.position.x += (centerX - 30 - camera.position.x) * 0.03;
-    camera.lookAt(centerX, 0, (egoCar.position.z + leadCar.position.z) / 2);
-
     renderMetrics();
+
+    const centerX = (egoCar.position.x + leadCar.position.x) / 2;
+    const centerZ = (egoCar.position.z + leadCar.position.z) / 2;
+    // Top-down camera: fixed height 350, stays south of midpoint so North is "up" on screen
+    camera.position.x += (centerX        - camera.position.x) * 0.025;
+    camera.position.y  = 350;
+    camera.position.z += (centerZ - 130 - camera.position.z) * 0.025;
+    camera.lookAt(centerX, 0, centerZ + 20);
+
     renderer.render(scene, camera);
   }
 
@@ -385,11 +445,21 @@ function renderMetrics() {
     ? "*** V2V DETECTION ACTIVE — obstacle received via CPM ***"
     : "";
 
+  // Pedestrian detection debug lines (one per world-source obstacle)
+  const pedDebugLines = Object.entries(current.objects)
+    .filter(([, o]) => o.source === "world")
+    .map(([k, o]) => {
+      if (o.in_ego_fov === true)  return `[DEBUG] ${k}: DETETADO pelo ego (verde)`;
+      if (o.in_lead_fov === true) return `[DEBUG] ${k}: DETETADO pelo lead (laranja) — aguarda CPM`;
+      return `[DEBUG] ${k}: NAO DETETADO — ocluido pelo edificio (vermelho)`;
+    });
+
   document.getElementById("metrics").textContent = [
     `CAM Rate: ${rateText} Hz  |  Age: ${ageText}  |  Latency: ${latencyText}`,
     `Stale: ${current.stale ? "yes" : "no"}`,
     objLines.length ? `Objects (${objLines.length}):\n${objLines.join("\n")}` : "Objects: none",
     cpmAlert,
+    ...pedDebugLines,
   ].filter(Boolean).join("\n");
 }
 

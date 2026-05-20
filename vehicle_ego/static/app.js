@@ -10,6 +10,7 @@ let current = {
   camRateHz: 0,
   camAge: null,
   camLatency: null,
+  scenario: null,
 };
 
 function applyState(payload) {
@@ -25,9 +26,11 @@ function applyState(payload) {
   current.camRateHz = payload.metrics.cam_rate_hz;
   current.camAge = payload.metrics.last_cam_age_sec;
   current.camLatency = payload.metrics.last_cam_latency_sec ?? null;
+  current.scenario = payload.scenario ?? current.scenario;
 }
 
 function connectStateSource() {
+  fetchState();
   if (typeof io !== "undefined") {
     const socket = io({ transports: ["polling"], upgrade: false });
     socket.on("state_update", (payload) => {
@@ -92,79 +95,9 @@ function init3d() {
   dirLight.position.set(0, 500, 0); // straight down for top-down view
   scene.add(dirLight);
 
-  // E-W road — 16 m wide (2 × 8 m lanes), centred at z=0
-  const road = new THREE.Mesh(
-    new THREE.PlaneGeometry(3000, 16),
-    new THREE.MeshStandardMaterial({ color: 0x2f3136, roughness: 0.95, metalness: 0.02 })
-  );
-  road.rotation.x = -Math.PI / 2;
-  road.position.y = -0.01;
-  scene.add(road);
-
-  // N-S road — 16 m wide (2 × 8 m lanes), centred at x=200 (intersection centre)
-  const nsRoad = new THREE.Mesh(
-    new THREE.PlaneGeometry(16, 3000),
-    new THREE.MeshStandardMaterial({ color: 0x2f3136, roughness: 0.95, metalness: 0.02 })
-  );
-  nsRoad.rotation.x = -Math.PI / 2;
-  nsRoad.position.x = 200;
-  nsRoad.position.y = -0.005;
-  scene.add(nsRoad);
-
-  // Building (SW corner occluder): world x∈[186,194], y∈[-34,-4]
-  // world.y maps DIRECTLY to Three.js z — no negation
-  const bx1 = 186, by1 = -34, bx2 = 194, by2 = -4;
-  const building = new THREE.Mesh(
-    new THREE.BoxGeometry(bx2 - bx1, 10, Math.abs(by2 - by1)),
-    new THREE.MeshStandardMaterial({ color: 0x6b5c4a, roughness: 0.9, metalness: 0.1 })
-  );
-  building.position.x = (bx1 + bx2) / 2; // 192
-  building.position.y = 5;
-  building.position.z = (by1 + by2) / 2;  // -19 — south of intersection (FIXED)
-  scene.add(building);
-
-  // E-W centre lane line (dashed yellow)
-  const laneLine = new THREE.Mesh(
-    new THREE.PlaneGeometry(3000, 1.2),
-    new THREE.MeshBasicMaterial({ map: createDashTexture(), transparent: true })
-  );
-  laneLine.rotation.x = -Math.PI / 2;
-  laneLine.position.y = 0.02;
-  scene.add(laneLine);
-
-  // N-S centre lane line (dashed yellow, running along Z)
-  const nsLaneLine = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.2, 3000),
-    new THREE.MeshBasicMaterial({ map: createDashTexture(Math.PI / 2), transparent: true })
-  );
-  nsLaneLine.rotation.x = -Math.PI / 2;
-  nsLaneLine.position.x = 200;
-  nsLaneLine.position.y = 0.02;
-  scene.add(nsLaneLine);
-
-  // Road edge lines (solid white) — E-W at z=±8
-  for (const ez of [-8, 8]) {
-    const e = new THREE.Mesh(
-      new THREE.PlaneGeometry(3000, 0.4),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 })
-    );
-    e.rotation.x = -Math.PI / 2;
-    e.position.z = ez;
-    e.position.y = 0.03;
-    scene.add(e);
-  }
-
-  // Road edge lines (solid white) — N-S at x=192 and x=208
-  for (const ex of [192, 208]) {
-    const e = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.4, 3000),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 })
-    );
-    e.rotation.x = -Math.PI / 2;
-    e.position.x = ex;
-    e.position.y = 0.03;
-    scene.add(e);
-  }
+  const layoutGroup = new THREE.Group();
+  scene.add(layoutGroup);
+  let renderedScenarioName = null;
 
   addRoadsideTrees(scene);
 
@@ -214,6 +147,7 @@ function init3d() {
   scene.add(egoFovGroup);
 
   const EGO_HEADING_OFFSET = Math.PI;
+  const LEAD_HEADING_OFFSET = Math.PI;
 
   camera.position.set(200, 350, -120);
   camera.lookAt(200, 0, 60);
@@ -233,19 +167,21 @@ function init3d() {
 
   function animate() {
     requestAnimationFrame(animate);
+    renderedScenarioName = syncScenarioLayout(layoutGroup, current.scenario, renderedScenarioName);
 
     const camObj = Object.values(current.objects).find(o => o.source === "cam");
+    const worldLeadObj = current.objects.lead_car;
     const leadX = camObj ? camObj.x : leadCar.position.x;
     const leadY = camObj ? (camObj.y ?? 0) : 0;
     const leadStale = camObj ? !!camObj.stale : true;
-    const leadHeading = camObj ? (camObj.heading ?? 0) : 0;
+    const leadHeading = worldLeadObj ? (worldLeadObj.heading ?? 0) : (camObj ? (camObj.heading ?? 0) : 0);
 
     egoCar.position.x += (current.selfX - egoCar.position.x) * 0.15;
     egoCar.position.z += (current.selfY - egoCar.position.z) * 0.15;
     egoCar.rotation.y = Math.PI - THREE.MathUtils.degToRad(current.selfHeading ?? 0) + EGO_HEADING_OFFSET;
     leadCar.position.x += (leadX - leadCar.position.x) * 0.15;
     leadCar.position.z += (leadY - leadCar.position.z) * 0.15;
-    leadCar.rotation.y = Math.PI - THREE.MathUtils.degToRad(leadHeading);
+    leadCar.rotation.y = Math.PI - THREE.MathUtils.degToRad(leadHeading) + LEAD_HEADING_OFFSET;
     leadCar.material.color.set(leadStale ? 0xff4d6d : 0xff9f1c);
 
     // Update FoV cone to follow lead car and rotate with heading
@@ -253,7 +189,7 @@ function init3d() {
     // group.rotation.x = -PI/2 maps group's +Z to world +Y.
     fovGroup.position.x = leadCar.position.x;
     fovGroup.position.z = leadCar.position.z;
-    fovMesh.rotation.z = Math.PI - THREE.MathUtils.degToRad(leadHeading);
+    fovMesh.rotation.z = Math.PI - THREE.MathUtils.degToRad(leadHeading) + LEAD_HEADING_OFFSET;
     const hasCpm = Object.values(current.objects).some(o => o.source === "cpm" && !o.stale);
     fovMat.color.set(hasCpm ? 0x52b788 : 0x4cc9f0);
     fovMat.opacity = hasCpm ? 0.28 : 0.13;
@@ -313,11 +249,14 @@ function init3d() {
 
     const centerX = egoCar.position.x;
     const centerZ = egoCar.position.z;
-    // Top-down camera: fixed height 350, follows ego vehicle
+    const cameraConfig = current.scenario?.layout?.camera ?? {};
+    const cameraHeight = cameraConfig.height ?? 350;
+    const cameraZOffset = cameraConfig.z_offset ?? -130;
+    const lookAheadY = cameraConfig.look_ahead_y ?? 20;
     camera.position.x += (centerX        - camera.position.x) * 0.025;
-    camera.position.y  = 350;
-    camera.position.z += (centerZ - 130 - camera.position.z) * 0.025;
-    camera.lookAt(centerX, 0, centerZ + 20);
+    camera.position.y  = cameraHeight;
+    camera.position.z += (centerZ + cameraZOffset - camera.position.z) * 0.025;
+    camera.lookAt(centerX, 0, centerZ + lookAheadY);
 
     renderer.render(scene, camera);
   }
@@ -329,6 +268,114 @@ function init3d() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
+}
+
+function syncScenarioLayout(layoutGroup, scenario, renderedScenarioName) {
+  const scenarioName = scenario?.name ?? "__loading";
+  if (scenarioName === renderedScenarioName) {
+    return renderedScenarioName;
+  }
+
+  while (layoutGroup.children.length > 0) {
+    const child = layoutGroup.children[0];
+    layoutGroup.remove(child);
+    child.traverse?.((node) => {
+      node.geometry?.dispose?.();
+      if (Array.isArray(node.material)) {
+        node.material.forEach((material) => material.dispose?.());
+      } else {
+        node.material?.dispose?.();
+      }
+    });
+  }
+
+  const layout = scenario?.layout ?? fallbackLayout();
+  for (const road of layout.roads ?? []) {
+    addRoad(layoutGroup, road);
+  }
+  for (const occluder of layout.occluders ?? []) {
+    addOccluder(layoutGroup, occluder);
+  }
+
+  const title = scenario?.title ?? scenarioName;
+  const subtitle = document.querySelector("#overlay .subtitle");
+  if (subtitle) {
+    subtitle.textContent = `${title} (${scenarioName})`;
+  }
+
+  return scenarioName;
+}
+
+function fallbackLayout() {
+  return {
+    roads: [
+      { orientation: "x", center: { x: 0, y: 0 }, length: 3000, width: 16 },
+      { orientation: "y", center: { x: 200, y: 0 }, length: 3000, width: 16 },
+    ],
+    occluders: [
+      { type: "rect", x1: 188, y1: -34, x2: 196, y2: -4, height: 10 },
+    ],
+  };
+}
+
+function addRoad(group, road) {
+  const orientation = road.orientation ?? "x";
+  const center = road.center ?? { x: 0, y: 0 };
+  const length = road.length ?? 1000;
+  const width = road.width ?? 16;
+  const isNorthSouth = orientation === "y";
+
+  const roadMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(isNorthSouth ? width : length, isNorthSouth ? length : width),
+    new THREE.MeshStandardMaterial({ color: 0x2f3136, roughness: 0.95, metalness: 0.02 })
+  );
+  roadMesh.rotation.x = -Math.PI / 2;
+  roadMesh.position.x = center.x ?? 0;
+  roadMesh.position.z = center.y ?? 0;
+  roadMesh.position.y = -0.01;
+  group.add(roadMesh);
+
+  const laneLine = new THREE.Mesh(
+    new THREE.PlaneGeometry(isNorthSouth ? 1.2 : length, isNorthSouth ? length : 1.2),
+    new THREE.MeshBasicMaterial({ map: createDashTexture(isNorthSouth ? Math.PI / 2 : 0), transparent: true })
+  );
+  laneLine.rotation.x = -Math.PI / 2;
+  laneLine.position.x = center.x ?? 0;
+  laneLine.position.z = center.y ?? 0;
+  laneLine.position.y = 0.02;
+  group.add(laneLine);
+
+  for (const side of [-1, 1]) {
+    const edge = new THREE.Mesh(
+      new THREE.PlaneGeometry(isNorthSouth ? 0.4 : length, isNorthSouth ? length : 0.4),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 })
+    );
+    edge.rotation.x = -Math.PI / 2;
+    edge.position.x = (center.x ?? 0) + (isNorthSouth ? side * width / 2 : 0);
+    edge.position.z = (center.y ?? 0) + (isNorthSouth ? 0 : side * width / 2);
+    edge.position.y = 0.03;
+    group.add(edge);
+  }
+}
+
+function addOccluder(group, occluder) {
+  if (occluder.type !== "rect") {
+    return;
+  }
+  const x1 = Number(occluder.x1);
+  const y1 = Number(occluder.y1);
+  const x2 = Number(occluder.x2);
+  const y2 = Number(occluder.y2);
+  const height = Number(occluder.height ?? 8);
+
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(Math.abs(x2 - x1), height, Math.abs(y2 - y1)),
+    new THREE.MeshStandardMaterial({ color: 0x6b5c4a, roughness: 0.9, metalness: 0.1 })
+  );
+  mesh.position.x = (x1 + x2) / 2;
+  mesh.position.y = height / 2;
+  mesh.position.z = (y1 + y2) / 2;
+  group.add(mesh);
 }
 
 function buildVehicle(color, geometry) {
@@ -439,6 +486,7 @@ function renderMetrics() {
   const ageText = current.camAge == null ? "n/a" : `${current.camAge.toFixed(2)}s`;
   const rateText = Number.isFinite(current.camRateHz) ? current.camRateHz.toFixed(2) : "0.00";
   const latencyText = current.camLatency == null ? "n/a" : `${current.camLatency.toFixed(2)}s`;
+  const scenarioText = current.scenario?.name ? `Scenario: ${current.scenario.name}` : "Scenario: loading";
 
   const objLines = Object.entries(current.objects).map(([key, obj]) => {
     const staleFlag = obj.stale ? " [STALE]" : "";
@@ -461,6 +509,7 @@ function renderMetrics() {
     });
 
   document.getElementById("metrics").textContent = [
+    scenarioText,
     `CAM Rate: ${rateText} Hz  |  Age: ${ageText}  |  Latency: ${latencyText}`,
     `Stale: ${current.stale ? "yes" : "no"}`,
     objLines.length ? `Objects (${objLines.length}):\n${objLines.join("\n")}` : "Objects: none",

@@ -1,0 +1,86 @@
+{
+  "name": "intersection-occlusion",
+  "title": "Intersection Occlusion",
+  "description": "Ego turns south at an intersection while the lead vehicle detects an obstacle near an occluding building.",
+  "defaults": {
+    "tick_seconds": 1.0,
+    "step_meters": 2.0
+  },
+  "layout": {
+    "type": "intersection",
+    "roads": [
+      {
+        "id": "east-west",
+        "orientation": "x",
+        "center": {"x": 0, "y": 0},
+        "length": 3000,
+        "width": 16
+      },
+      {
+        "id": "north-south",
+        "orientation": "y",
+        "center": {"x": 200, "y": 0},
+        "length": 3000,
+        "width": 16
+      }
+    ],
+    "occluders": [
+      {
+        "id": "sw-building",
+        "type": "rect",
+        "x1": 188,
+        "y1": -34,
+        "x2": 196,
+        "y2": -4,
+        "height": 10
+      }
+    ],
+    "camera": {
+      "height": 350,
+      "z_offset": -130,
+      "look_ahead_y": 20
+    }
+  },
+  "vehicles": {
+    "ego": {
+      "start": {"x": 20, "y": 4, "heading": 0},
+      "route": [
+        {
+          "axis": "x",
+          "direction": 1,
+          "heading": 0,
+          "until": {"op": ">=", "value": 200},
+          "on_reach": {
+            "snap": {"x": 204, "y": 4},
+            "next_segment": true
+          }
+        },
+        {
+          "axis": "y",
+          "direction": -1,
+          "heading": 270
+        }
+      ]
+    },
+    "lead": {
+      "start": {"x": 204, "y": 200, "heading": 270},
+      "route": [
+        {
+          "axis": "y",
+          "direction": -1,
+          "heading": 270
+        }
+      ]
+    }
+  },
+  "obstacles": [
+    {"id": "1", "x": 204, "y": -14, "heading": 0, "speed": 0}
+  ],
+  "reset": {
+    "mode": "all",
+    "conditions": [
+      {"vehicle": "ego", "axis": "y", "op": "<", "value": -200},
+      {"vehicle": "lead", "axis": "y", "op": "<", "value": -200}
+    ]
+  }
+}

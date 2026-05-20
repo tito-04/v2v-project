@@ -7,6 +7,8 @@ from typing import Any
 
 import paho.mqtt.client as mqtt
 
+from world_generator.scenarios import load_scenario_from_env
+
 
 MAIN_BROKER_HOST = os.getenv("MAIN_BROKER_HOST", "main-broker")
 MAIN_BROKER_PORT = int(os.getenv("MAIN_BROKER_PORT", "1883"))
@@ -23,12 +25,11 @@ BASE_LON = float(os.getenv("LEAD_LONGITUDE", "-8.654400"))
 FOV_RANGE_M = float(os.getenv("LEAD_FOV_RANGE_M", "80.0"))
 FOV_HALF_ANGLE_DEG = float(os.getenv("LEAD_FOV_HALF_ANGLE_DEG", "60.0"))
 LOOP_SECONDS = float(os.getenv("WORLD_TICK_SECONDS", "1.0"))
-
-# Building occluder rectangle (SW corner of intersection)
-BUILDING_X1 = float(os.getenv("BUILDING_X1", "188"))
-BUILDING_Y1 = float(os.getenv("BUILDING_Y1", "-34"))
-BUILDING_X2 = float(os.getenv("BUILDING_X2", "196"))
-BUILDING_Y2 = float(os.getenv("BUILDING_Y2", "-4"))
+SCENARIO = load_scenario_from_env()
+OCCLUDERS = [
+    occluder for occluder in SCENARIO.get("layout", {}).get("occluders", [])
+    if occluder.get("type") == "rect"
+]
 
 
 state_lock = threading.Lock()
@@ -101,11 +102,16 @@ def objects_in_fov(vehicle_x: float, vehicle_y: float, heading_deg: float) -> li
         if rel_angle > 180.0:
             rel_angle -= 360.0
         if abs(rel_angle) <= FOV_HALF_ANGLE_DEG:
-            # Occlusion check: skip objects whose LOS is blocked by the building
-            if segment_intersects_rect(
-                (vehicle_x, vehicle_y), (obj["x"], obj["y"]),
-                BUILDING_X1, BUILDING_Y1, BUILDING_X2, BUILDING_Y2,
-            ):
+            # Occlusion check: skip objects whose LOS is blocked by scenario occluders.
+            blocked = any(
+                segment_intersects_rect(
+                    (vehicle_x, vehicle_y), (obj["x"], obj["y"]),
+                    float(occluder["x1"]), float(occluder["y1"]),
+                    float(occluder["x2"]), float(occluder["y2"]),
+                )
+                for occluder in OCCLUDERS
+            )
+            if blocked:
                 continue
             perceived.append({
                 "object_id": obj_id,
@@ -117,7 +123,7 @@ def objects_in_fov(vehicle_x: float, vehicle_y: float, heading_deg: float) -> li
     return perceived
 
 
-def build_cam_payload(x_meter: float, y_meter: float = 0.0) -> dict[str, Any]:
+def build_cam_payload(x_meter: float, y_meter: float = 0.0, heading_deg: float = 0.0, speed_mps: float = 0.0) -> dict[str, Any]:
     lon = BASE_LON + meters_to_deg_lon(x_meter, BASE_LAT)
     lat = BASE_LAT + meters_to_deg_lat(y_meter)
     generation_delta_time = int((time.time() * 1000.0) % 65536)
@@ -143,11 +149,11 @@ def build_cam_payload(x_meter: float, y_meter: float = 0.0) -> dict[str, Any]:
             "highFrequencyContainer": {
                 "basicVehicleContainerHighFrequency": {
                     "heading": {
-                        "headingValue": 90.0,
+                        "headingValue": heading_deg,
                         "headingConfidence": 127,
                     },
                     "speed": {
-                        "speedValue": 8.0,
+                        "speedValue": speed_mps,
                         "speedConfidence": 127,
                     },
                     "driveDirection": 2,
@@ -363,6 +369,7 @@ if __name__ == "__main__":
             x_snapshot = lead_state["x"]
             y_snapshot = lead_state["y"]
             heading_snapshot = lead_state["heading"]
+            speed_snapshot = lead_state["speed"]
 
         perceived = objects_in_fov(x_snapshot, y_snapshot, heading_snapshot)
         if perceived:
@@ -374,7 +381,7 @@ if __name__ == "__main__":
         wave_ts = time.time()
         cam_client.publish(TOPIC_CAM_TIME, json.dumps({"test": {"wave_timestamp": wave_ts}}), qos=1)
 
-        cam = build_cam_payload(x_snapshot, y_snapshot)
+        cam = build_cam_payload(x_snapshot, y_snapshot, heading_snapshot, speed_snapshot)
         cam_client.publish(TOPIC_CAM_IN, json.dumps(cam), qos=1)
 
         print(f"published CAM x={x_snapshot:.2f} perceived={len(perceived)}")

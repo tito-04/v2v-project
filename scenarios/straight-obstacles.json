@@ -1,0 +1,60 @@
+{
+  "name": "straight-obstacles",
+  "title": "Straight Road Obstacles",
+  "description": "Recreates the old straight-line scenario: ego and lead drive east while static obstacles sit along the road.",
+  "defaults": {
+    "tick_seconds": 1.0,
+    "step_meters": 2.0
+  },
+  "layout": {
+    "type": "straight",
+    "roads": [
+      {
+        "id": "main-road",
+        "orientation": "x",
+        "center": {"x": 250, "y": 0},
+        "length": 1000,
+        "width": 120
+      }
+    ],
+    "occluders": [],
+    "camera": {
+      "height": 260,
+      "z_offset": -95,
+      "look_ahead_y": 0
+    }
+  },
+  "vehicles": {
+    "ego": {
+      "start": {"x": 20, "y": 4, "heading": 0},
+      "route": [
+        {
+          "axis": "x",
+          "direction": 1,
+          "heading": 0
+        }
+      ]
+    },
+    "lead": {
+      "start": {"x": 80, "y": 4, "heading": 0},
+      "route": [
+        {
+          "axis": "x",
+          "direction": 1,
+          "heading": 0
+        }
+      ]
+    }
+  },
+  "obstacles": [
+    {"id": "1", "x": 100, "y": 4, "heading": 0, "speed": 0},
+    {"id": "2", "x": 200, "y": 4, "heading": 0, "speed": 0},
+    {"id": "3", "x": 300, "y": 4, "heading": 0, "speed": 0}
+  ],
+  "reset": {
+    "mode": "any",
+    "conditions": [
+      {"vehicle": "lead", "axis": "x", "op": ">=", "value": 500}
+    ]
+  }
+}

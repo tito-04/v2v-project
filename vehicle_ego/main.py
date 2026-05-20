@@ -8,6 +8,8 @@ from flask import Flask, jsonify, render_template
 from flask_socketio import SocketIO
 import paho.mqtt.client as mqtt
 
+from world_generator.scenarios import load_scenario_from_env, public_metadata
+
 
 MAIN_BROKER_HOST = os.getenv("MAIN_BROKER_HOST", "main-broker")
 MAIN_BROKER_PORT = int(os.getenv("MAIN_BROKER_PORT", "1883"))
@@ -18,6 +20,7 @@ LEAD_BROKER_PORT = int(os.getenv("LEAD_BROKER_PORT", "1883"))
 TOPIC_WORLD_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
 TOPIC_WORLD_LEAD = os.getenv("WORLD_TOPIC_LEAD", "world/pos/lead")
 TOPIC_WORLD_OBSTACLE = os.getenv("WORLD_TOPIC_OBSTACLE", "world/pos/obstacle")
+TOPIC_WORLD_SCENARIO = os.getenv("WORLD_TOPIC_SCENARIO", "world/scenario")
 TOPIC_CPM_OUT = os.getenv("CPM_OUT_TOPIC", "vanetza/out/cpm")
 TOPIC_CAM_OUT = os.getenv("CAM_OUT_TOPIC", "vanetza/out/cam")
 TOPIC_CAM_TIME = os.getenv("CAM_TIME_TOPIC", "vanetza/time/cam")
@@ -28,13 +31,11 @@ BASE_LAT = float(os.getenv("WORLD_BASE_LAT", "40.628300"))
 BASE_LON = float(os.getenv("WORLD_BASE_LON", "-8.654400"))
 FOV_RANGE_M = 80.0
 FOV_HALF_ANGLE_DEG = 60.0
-
-# Building occluder rectangle (SW corner of intersection)
-BUILDING_X1 = float(os.getenv("BUILDING_X1", "188"))
-BUILDING_Y1 = float(os.getenv("BUILDING_Y1", "-34"))
-BUILDING_X2 = float(os.getenv("BUILDING_X2", "196"))
-BUILDING_Y2 = float(os.getenv("BUILDING_Y2", "-4"))
-BUILDING = (BUILDING_X1, BUILDING_Y1, BUILDING_X2, BUILDING_Y2)
+SCENARIO = load_scenario_from_env()
+OCCLUDERS = [
+    occluder for occluder in SCENARIO.get("layout", {}).get("occluders", [])
+    if occluder.get("type") == "rect"
+]
 
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -45,6 +46,7 @@ state: dict[str, Any] = {
     "self": {"x": 10.0, "y": 0.0, "heading": 0.0, "speed": 0.0, "updated_at": 0.0, "fov_range": FOV_RANGE_M, "fov_half_angle": FOV_HALF_ANGLE_DEG},
     "objects": {},  # All detected objects: CAM (from lead), CPM (from lead), world obstacles, lead car
     "metrics": {"cam_rate_hz": 0.0, "last_cam_age_sec": None, "last_cam_latency_sec": None, "stale": True},
+    "scenario": public_metadata(SCENARIO),
 }
 _cam_counter = 0
 _cam_window_start = time.time()
@@ -103,9 +105,17 @@ def emit_state() -> None:
     socketio.emit("state_update", payload)
 
 
-def is_in_fov(vehicle_x: float, vehicle_y: float, vehicle_heading: float, obj_x: float, obj_y: float, fov_range: float, fov_half_angle: float,
-              building: tuple[float, float, float, float] | None = None) -> bool:
-    """Check if object is within vehicle's field of view cone, with optional occlusion rect."""
+def is_in_fov(
+    vehicle_x: float,
+    vehicle_y: float,
+    vehicle_heading: float,
+    obj_x: float,
+    obj_y: float,
+    fov_range: float,
+    fov_half_angle: float,
+    occluders: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Check if object is within vehicle's field of view cone, with optional scenario occluders."""
     import math
     
     # Calculate relative position
@@ -129,12 +139,26 @@ def is_in_fov(vehicle_x: float, vehicle_y: float, vehicle_heading: float, obj_x:
     in_cone = angle_diff <= fov_half_angle
     if not in_cone:
         return False
-    # Occlusion check
-    if building is not None:
-        bx1, by1, bx2, by2 = building
-        if segment_intersects_rect((vehicle_x, vehicle_y), (obj_x, obj_y), bx1, by1, bx2, by2):
+    for occluder in occluders or []:
+        if segment_intersects_rect(
+            (vehicle_x, vehicle_y), (obj_x, obj_y),
+            float(occluder["x1"]), float(occluder["y1"]),
+            float(occluder["x2"]), float(occluder["y2"]),
+        ):
             return False
     return True
+
+
+def on_world_scenario(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"world scenario parse error: {exc}")
+        return
+
+    with state_lock:
+        state["scenario"] = payload
+    emit_state()
 
 
 def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
@@ -153,7 +177,7 @@ def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) ->
                     obj_data["in_ego_fov"] = is_in_fov(
                         state["self"]["x"], state["self"]["y"], state["self"]["heading"],
                         obj_data["x"], obj_data["y"],
-                        FOV_RANGE_M, FOV_HALF_ANGLE_DEG, building=BUILDING
+                        FOV_RANGE_M, FOV_HALF_ANGLE_DEG, occluders=OCCLUDERS
                     )
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"world ego parse error: {exc}")
@@ -180,7 +204,7 @@ def on_world_lead(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -
                 "in_ego_fov": is_in_fov(
                     state["self"]["x"], state["self"]["y"], state["self"]["heading"],
                     lead_x, lead_y,
-                    FOV_RANGE_M, FOV_HALF_ANGLE_DEG, building=BUILDING
+                    FOV_RANGE_M, FOV_HALF_ANGLE_DEG, occluders=OCCLUDERS
                 ),
             }
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
@@ -213,7 +237,7 @@ def on_world_obstacle(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessag
                 "in_ego_fov": is_in_fov(
                     state["self"]["x"], state["self"]["y"], state["self"]["heading"],
                     x, y,
-                    FOV_RANGE_M, FOV_HALF_ANGLE_DEG, building=BUILDING
+                    FOV_RANGE_M, FOV_HALF_ANGLE_DEG, occluders=OCCLUDERS
                 ),
             }
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
@@ -423,10 +447,12 @@ def start_mqtt() -> None:
     world_client.on_message = on_cam_default
     world_client.message_callback_add(TOPIC_WORLD_EGO, on_world_ego)
     world_client.message_callback_add(TOPIC_WORLD_LEAD, on_world_lead)
+    world_client.message_callback_add(TOPIC_WORLD_SCENARIO, on_world_scenario)
     # Subscribe to all obstacles: world/pos/obstacle/+ (wildcard matches any obstacle ID)
     world_client.message_callback_add("world/pos/obstacle/+", on_world_obstacle)
     world_client.subscribe(TOPIC_WORLD_EGO, qos=1)
     world_client.subscribe(TOPIC_WORLD_LEAD, qos=1)
+    world_client.subscribe(TOPIC_WORLD_SCENARIO, qos=1)
     world_client.subscribe("world/pos/obstacle/+", qos=1)
 
     cam_client = _connect_with_retry(EGO_BROKER_HOST, EGO_BROKER_PORT, "vehicle-ego-cam")

@@ -1,39 +1,27 @@
 import json
 import os
 import time
+from typing import Any
 
 import paho.mqtt.client as mqtt
+
+from world_generator.scenarios import load_scenario_from_env, public_metadata
+from world_generator.simulation import WorldSimulation
 
 
 MAIN_BROKER_HOST = os.getenv("MAIN_BROKER_HOST", "main-broker")
 MAIN_BROKER_PORT = int(os.getenv("MAIN_BROKER_PORT", "1883"))
 TOPIC_LEAD = os.getenv("WORLD_TOPIC_LEAD", "world/pos/lead")
 TOPIC_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
-TICK_SECONDS = float(os.getenv("WORLD_TICK_SECONDS", "1.0"))
-X_STEP = float(os.getenv("X_STEP_METERS", "2.0"))
-SPEED = X_STEP / TICK_SECONDS
+TOPIC_OBSTACLE = os.getenv("WORLD_TOPIC_OBSTACLE", "world/pos/obstacle")
+TOPIC_SCENARIO = os.getenv("WORLD_TOPIC_SCENARIO", "world/scenario")
 
-# Intersection geometry
-INTERSECTION_X = float(os.getenv("INTERSECTION_X", "200"))
-INTERSECTION_Y = float(os.getenv("INTERSECTION_Y", "0"))
-LANE_W = float(os.getenv("LANE_W", "4"))
 
-# Start positions
-EGO_START_X = float(os.getenv("EGO_START_X", "20"))
-EGO_START_Y = float(os.getenv("EGO_START_Y", "-4"))
-LEAD_START_X = float(os.getenv("LEAD_START_X", "204"))
-LEAD_START_Y = float(os.getenv("LEAD_START_Y", "200"))
-
-# Reset boundary (south — negative Y)
-WORLD_LENGTH_S = float(os.getenv("WORLD_LENGTH_S", "200"))
-
-# Static obstacles
-NUM_OBSTACLES = int(os.getenv("NUM_OBSTACLES", "1"))
-OBSTACLES = []
-for _i in range(1, NUM_OBSTACLES + 1):
-    obs_x = float(os.getenv(f"OBSTACLE_{_i}_X", "204"))
-    obs_y = float(os.getenv(f"OBSTACLE_{_i}_Y", "-14"))
-    OBSTACLES.append({"x": obs_x, "y": obs_y, "idx": _i})
+def env_float(name: str, fallback: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return fallback
+    return float(raw)
 
 
 def connect_client() -> mqtt.Client:
@@ -66,46 +54,48 @@ def publish_position(client: mqtt.Client, topic: str, x: float, y: float, headin
     client.publish(topic, json.dumps(payload), qos=1)
 
 
-def reset_vehicles() -> tuple[dict, dict]:
-    ego = {"x": EGO_START_X, "y": EGO_START_Y, "heading": 0.0, "phase": "east"}
-    lead = {"x": LEAD_START_X, "y": LEAD_START_Y, "heading": 270.0}
-    return ego, lead
+def publish_scenario(client: mqtt.Client, scenario: dict[str, Any]) -> None:
+    payload = public_metadata(scenario)
+    payload["timestamp"] = time.time()
+    client.publish(TOPIC_SCENARIO, json.dumps(payload), qos=1, retain=True)
 
 
 if __name__ == "__main__":
+    scenario = load_scenario_from_env()
+    defaults = scenario.get("defaults", {})
+    tick_seconds = env_float("WORLD_TICK_SECONDS", float(defaults.get("tick_seconds", 1.0)))
+    step_meters = env_float("X_STEP_METERS", float(defaults.get("step_meters", 2.0)))
+
     client = connect_client()
-    ego, lead = reset_vehicles()
+    simulation = WorldSimulation(scenario, tick_seconds, step_meters)
+    publish_scenario(client, scenario)
+    print(f"Loaded scenario: {scenario['name']}")
 
     while True:
-        # --- Ego movement ---
-        if ego["phase"] == "east":
-            ego["x"] += X_STEP
-            if ego["x"] >= INTERSECTION_X:
-                # Snap to southbound lane and turn south
-                ego["x"] = INTERSECTION_X + LANE_W
-                ego["y"] = EGO_START_Y  # still at y=-4 entering the turn
-                ego["phase"] = "south"
-                ego["heading"] = 270.0
-                print(f"EGO: turned south at intersection, now at ({ego['x']:.1f}, {ego['y']:.1f})")
-        elif ego["phase"] == "south":
-            ego["y"] -= X_STEP
-
-        # --- Lead movement (always south) ---
-        lead["y"] -= X_STEP
-
-        # --- Reset when both have exited south ---
-        if ego["y"] < -WORLD_LENGTH_S and lead["y"] < -WORLD_LENGTH_S:
-            ego, lead = reset_vehicles()
+        if simulation.tick():
             print("--- WORLD LOOP RESET ---")
 
-        # --- Publish positions ---
-        publish_position(client, TOPIC_LEAD, lead["x"], lead["y"], lead["heading"], SPEED)
-        publish_position(client, TOPIC_EGO, ego["x"], ego["y"], ego["heading"], SPEED)
+        lead = simulation.vehicles["lead"]
+        ego = simulation.vehicles["ego"]
+        publish_position(client, TOPIC_LEAD, lead["x"], lead["y"], lead["heading"], lead["speed"])
+        publish_position(client, TOPIC_EGO, ego["x"], ego["y"], ego["heading"], ego["speed"])
 
-        for obs in OBSTACLES:
-            topic = f"world/pos/obstacle/{obs['idx']}"
-            publish_position(client, topic, obs["x"], obs["y"], 0.0, 0.0)
+        for idx, obstacle in enumerate(simulation.obstacles(), start=1):
+            obstacle_id = obstacle.get("id", idx)
+            topic = f"{TOPIC_OBSTACLE}/{obstacle_id}"
+            publish_position(
+                client,
+                topic,
+                float(obstacle["x"]),
+                float(obstacle.get("y", 0.0)),
+                float(obstacle.get("heading", 0.0)),
+                float(obstacle.get("speed", 0.0)),
+            )
 
-        print(f"tick ego=({ego['x']:.1f},{ego['y']:.1f}) phase={ego['phase']} "
-              f"lead=({lead['x']:.1f},{lead['y']:.1f})")
-        time.sleep(TICK_SECONDS)
+        print(
+            f"tick scenario={scenario['name']} "
+            f"ego=({ego['x']:.1f},{ego['y']:.1f}) heading={ego['heading']:.0f} "
+            f"lead=({lead['x']:.1f},{lead['y']:.1f}) heading={lead['heading']:.0f} "
+            f"obstacles={len(simulation.obstacles())}"
+        )
+        time.sleep(tick_seconds)

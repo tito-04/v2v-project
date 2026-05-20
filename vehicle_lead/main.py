@@ -22,6 +22,7 @@ BASE_LAT = float(os.getenv("LEAD_LATITUDE", "40.628300"))
 BASE_LON = float(os.getenv("LEAD_LONGITUDE", "-8.654400"))
 FOV_RANGE_M = float(os.getenv("LEAD_FOV_RANGE_M", "80.0"))
 FOV_HALF_ANGLE_DEG = float(os.getenv("LEAD_FOV_HALF_ANGLE_DEG", "60.0"))
+LOOP_SECONDS = float(os.getenv("WORLD_TICK_SECONDS", "1.0"))
 
 # Building occluder rectangle (SW corner of intersection)
 BUILDING_X1 = float(os.getenv("BUILDING_X1", "188"))
@@ -377,4 +378,4 @@ if __name__ == "__main__":
         cam_client.publish(TOPIC_CAM_IN, json.dumps(cam), qos=1)
 
         print(f"published CAM x={x_snapshot:.2f} perceived={len(perceived)}")
-        time.sleep(1.0)
+        time.sleep(max(LOOP_SECONDS, 0.01))

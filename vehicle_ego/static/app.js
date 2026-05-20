@@ -111,9 +111,9 @@ function init3d() {
   nsRoad.position.y = -0.005;
   scene.add(nsRoad);
 
-  // Building (SW corner occluder): world x∈[188,196], y∈[-34,-4]
+  // Building (SW corner occluder): world x∈[186,194], y∈[-34,-4]
   // world.y maps DIRECTLY to Three.js z — no negation
-  const bx1 = 188, by1 = -34, bx2 = 196, by2 = -4;
+  const bx1 = 186, by1 = -34, bx2 = 194, by2 = -4;
   const building = new THREE.Mesh(
     new THREE.BoxGeometry(bx2 - bx1, 10, Math.abs(by2 - by1)),
     new THREE.MeshStandardMaterial({ color: 0x6b5c4a, roughness: 0.9, metalness: 0.1 })
@@ -135,7 +135,7 @@ function init3d() {
   // N-S centre lane line (dashed yellow, running along Z)
   const nsLaneLine = new THREE.Mesh(
     new THREE.PlaneGeometry(1.2, 3000),
-    new THREE.MeshBasicMaterial({ map: createDashTexture(), transparent: true })
+    new THREE.MeshBasicMaterial({ map: createDashTexture(Math.PI / 2), transparent: true })
   );
   nsLaneLine.rotation.x = -Math.PI / 2;
   nsLaneLine.position.x = 200;
@@ -213,6 +213,8 @@ function init3d() {
   egoFovGroup.add(egoFovMesh);
   scene.add(egoFovGroup);
 
+  const EGO_HEADING_OFFSET = Math.PI;
+
   camera.position.set(200, 350, -120);
   camera.lookAt(200, 0, 60);
 
@@ -240,7 +242,7 @@ function init3d() {
 
     egoCar.position.x += (current.selfX - egoCar.position.x) * 0.15;
     egoCar.position.z += (current.selfY - egoCar.position.z) * 0.15;
-    egoCar.rotation.y = Math.PI - THREE.MathUtils.degToRad(current.selfHeading ?? 0);
+    egoCar.rotation.y = Math.PI - THREE.MathUtils.degToRad(current.selfHeading ?? 0) + EGO_HEADING_OFFSET;
     leadCar.position.x += (leadX - leadCar.position.x) * 0.15;
     leadCar.position.z += (leadY - leadCar.position.z) * 0.15;
     leadCar.rotation.y = Math.PI - THREE.MathUtils.degToRad(leadHeading);
@@ -259,7 +261,7 @@ function init3d() {
     // Update FoV cone to follow ego car and rotate with heading
     egoFovGroup.position.x = egoCar.position.x;
     egoFovGroup.position.z = egoCar.position.z;
-    egoFovMesh.rotation.z = Math.PI - THREE.MathUtils.degToRad(current.selfHeading ?? 0);
+    egoFovMesh.rotation.z = Math.PI - THREE.MathUtils.degToRad(current.selfHeading ?? 0) + EGO_HEADING_OFFSET;
     // Cone color updates later based on detection of any object in FoV
 
     // Sync world objects (obstacles) — lead_car excluded (rendered as vehicle mesh)
@@ -309,9 +311,9 @@ function init3d() {
 
     renderMetrics();
 
-    const centerX = (egoCar.position.x + leadCar.position.x) / 2;
-    const centerZ = (egoCar.position.z + leadCar.position.z) / 2;
-    // Top-down camera: fixed height 350, stays south of midpoint so North is "up" on screen
+    const centerX = egoCar.position.x;
+    const centerZ = egoCar.position.z;
+    // Top-down camera: fixed height 350, follows ego vehicle
     camera.position.x += (centerX        - camera.position.x) * 0.025;
     camera.position.y  = 350;
     camera.position.z += (centerZ - 130 - camera.position.z) * 0.025;
@@ -368,7 +370,7 @@ function loadVehicleModel(onLoad) {
   );
 }
 
-function createDashTexture() {
+function createDashTexture(rotationRad = 0) {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
   canvas.height = 32;
@@ -386,6 +388,10 @@ function createDashTexture() {
   texture.repeat.set(50, 1);
   texture.offset.set(0, 0);
   texture.anisotropy = 4;
+  if (rotationRad) {
+    texture.center.set(0.5, 0.5);
+    texture.rotation = rotationRad;
+  }
   return texture;
 }
 

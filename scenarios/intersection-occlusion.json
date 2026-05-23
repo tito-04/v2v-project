@@ -28,10 +28,10 @@
       {
         "id": "sw-building",
         "type": "rect",
-        "x1": 188,
+        "x1": 176,
         "y1": -34,
-        "x2": 196,
-        "y2": -4,
+        "x2": 192,
+        "y2": -8,
         "height": 10
       }
     ],
@@ -68,6 +68,7 @@
       "start": {"x": 204, "y": 200, "heading": 270},
       "accel_mps2": 6.0,
       "decel_mps2": 12.0,
+      "start_delay_seconds": 3.0,
       "route": [
         {
           "axis": "y",
@@ -81,11 +82,13 @@
     {
       "id": "pedestrian-1",
       "kind": "pedestrian",
-      "start": {"x": 190, "y": -14, "heading": 0},
+      "start": {"x": 198, "y": -14, "heading": 0},
       "speed_mps": 1.8,
       "dimensions": {"x": 1.2, "y": 1.2},
       "blocks_vehicle_path": true,
-      "loop_route": true,
+      "triggered_by_vehicle_stop": "ego",
+      "trigger_risk_object_id": "pedestrian-1",
+      "post_route_status": "done",
       "route": [
         {
           "axis": "x",
@@ -93,18 +96,7 @@
           "heading": 0,
           "until": {"op": ">=", "value": 218},
           "on_reach": {
-            "snap": {"x": 218, "heading": 180},
-            "next_segment": true
-          }
-        },
-        {
-          "axis": "x",
-          "direction": -1,
-          "heading": 180,
-          "until": {"op": "<=", "value": 190},
-          "on_reach": {
-            "snap": {"x": 190, "heading": 0},
-            "next_segment": true
+            "snap": {"x": 218, "heading": 0}
           }
         }
       ]

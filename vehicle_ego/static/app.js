@@ -122,8 +122,6 @@ function createView(title, bgColor) {
   scene.add(layoutGroup);
   scene.add(actorGroup);
   addGround(scene);
-  addRoadsideTrees(scene);
-
   return {
     title,
     scene,
@@ -176,7 +174,7 @@ function syncModelView(view) {
   syncActors(view, actors, "model");
   updateFov(view, "ego", self, 0x52b788, true);
   updateFov(view, "lead", null, 0xffc857, false);
-  updateCamera(view, self);
+  updateEgoModelCamera(view, self);
 }
 
 function syncActors(view, actors, mode) {
@@ -354,6 +352,28 @@ function updateCamera(view, focus) {
   view.camera.position.y = height;
   view.camera.position.z += (z + zOffset - view.camera.position.z) * 0.035;
   view.camera.lookAt(x, 0, z + lookAheadY);
+}
+
+function updateEgoModelCamera(view, focus) {
+  const actor = focus ?? { x: 200, y: 0, heading: 0 };
+  const x = Number(actor.x ?? 200);
+  const z = Number(actor.y ?? 0);
+  const heading = THREE.MathUtils.degToRad(Number(actor.heading ?? 0));
+  const forwardX = Math.cos(heading);
+  const forwardZ = Math.sin(heading);
+  const chaseDistance = 26;
+  const cameraHeight = 13;
+  const lookAhead = 58;
+
+  const targetX = x - forwardX * chaseDistance;
+  const targetZ = z - forwardZ * chaseDistance;
+  const lookX = x + forwardX * lookAhead;
+  const lookZ = z + forwardZ * lookAhead;
+
+  view.camera.position.x += (targetX - view.camera.position.x) * 0.12;
+  view.camera.position.y += (cameraHeight - view.camera.position.y) * 0.12;
+  view.camera.position.z += (targetZ - view.camera.position.z) * 0.12;
+  view.camera.lookAt(lookX, 2.8, lookZ);
 }
 
 function syncScenarioLayout(view) {

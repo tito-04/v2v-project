@@ -22,10 +22,10 @@
 
 ## Baseline
 - Start stack and show the split 3D UI.
-- Left panel ("World Truth") should show ego, lead, the moving pedestrian, the occluding building, crosswalk, and vehicle brake state.
+- Left panel ("World Truth") should show ego, lead, the waiting pedestrian, the occluding building, crosswalk, and vehicle brake state.
 - Right panel ("Ego World Model") should initially know less than the world truth, then gain CAM/CPM/direct detections as packets arrive or the pedestrian becomes visible.
 - Metrics should show low CAM/CPM loss and low delay.
-- When lead or ego detects a path-risk pedestrian, the relevant vehicle should brake/stop and show red brake lights.
+- When ego detects the path-risk pedestrian, ego should brake/stop; only then should the pedestrian cross and remain done on the far side.
 
 ## Mild profile
 - Apply netem mild profile to V2V path.

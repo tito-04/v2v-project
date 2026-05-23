@@ -8,6 +8,7 @@ from flask import Flask, jsonify, render_template
 from flask_socketio import SocketIO
 import paho.mqtt.client as mqtt
 
+from vehicle_ego.model_state import cam_model_key, model_key_for_world_candidate, upsert_model_object
 from world_generator.network_metrics import NetworkMetrics
 from world_generator.risk import first_risk_object, is_in_fov
 from world_generator.scenarios import load_scenario_from_env, public_metadata
@@ -131,6 +132,15 @@ def sync_legacy_locked() -> None:
     state["network"] = network_metrics.snapshot()
 
 
+def should_hold_for_crossing_pedestrian_locked() -> dict[str, Any] | None:
+    for obj in active_model_objects_locked():
+        if obj.get("kind") != "pedestrian":
+            continue
+        if obj.get("status") == "crossing" and obj.get("blocks_vehicle_path", False):
+            return obj
+    return None
+
+
 def update_direct_perception_locked(now: float) -> None:
     ego = state["self"]
     state["ego_model"]["self"] = dict(ego)
@@ -156,7 +166,7 @@ def update_direct_perception_locked(now: float) -> None:
         if not visible:
             continue
 
-        model_key = f"direct_{key}"
+        model_key = model_key_for_world_candidate(key, obj)
         item = dict(obj)
         item.update({
             "source": "direct",
@@ -165,7 +175,7 @@ def update_direct_perception_locked(now: float) -> None:
             "stale": False,
             "in_ego_fov": True,
         })
-        state["ego_model"]["objects"][model_key] = item
+        upsert_model_object(state["ego_model"]["objects"], model_key, item, source_priority=30)
 
     sync_legacy_locked()
 
@@ -181,7 +191,8 @@ def publish_ego_control_locked() -> None:
     if control_client is None:
         return
 
-    risk = first_risk_object(
+    hold_risk = should_hold_for_crossing_pedestrian_locked()
+    risk = hold_risk or first_risk_object(
         state["ego_model"].get("self") or state["self"],
         active_model_objects_locked(),
         lookahead_m=70.0,
@@ -311,7 +322,7 @@ def on_cpm_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
                 obj_x = sender_x + dx
                 obj_y = sender_y + dy
                 key = f"cpm_{sender_id if sender_id is not None else 'unknown'}_{obj_id}"
-                state["ego_model"]["objects"][key] = {
+                item = {
                     "id": key,
                     "kind": "remote-object",
                     "x": obj_x,
@@ -325,6 +336,7 @@ def on_cpm_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
                     "stale": False,
                     "blocks_vehicle_path": True,
                 }
+                upsert_model_object(state["ego_model"]["objects"], key, item, source_priority=20)
         sync_legacy_locked()
         publish_ego_control_locked()
     emit_state()
@@ -352,8 +364,10 @@ def on_cam_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
 
         x = meters_from_lon_delta(lon - BASE_LON, lat)
         y = meters_from_lat_delta(lat - BASE_LAT)
-        obj_key = f"cam_{station_id}" if station_id is not None else "cam_unknown"
-        state["ego_model"]["objects"][obj_key] = {
+        obj_key = cam_model_key(state["ego_model"]["objects"], x, y, station_id)
+        state["ego_model"]["objects"].pop(f"cam_{station_id}", None)
+        state["ego_model"]["objects"].pop("cam_unknown", None)
+        item = {
             "id": obj_key,
             "kind": "vehicle",
             "x": x,
@@ -369,6 +383,7 @@ def on_cam_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
             "stale": False,
             "blocks_vehicle_path": False,
         }
+        upsert_model_object(state["ego_model"]["objects"], obj_key, item, source_priority=10)
 
         elapsed = max(now - _cam_window_start, 1e-6)
         state["metrics"]["cam_rate_hz"] = _cam_counter / elapsed

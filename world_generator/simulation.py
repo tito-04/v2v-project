@@ -54,18 +54,26 @@ class WorldSimulation:
 
         for name, config in self.scenario["vehicles"].items():
             self._vehicle_configs[name] = config
+            has_start_delay = float(config.get("start_delay_seconds", 0.0)) > 0.0
             self.vehicles[name] = self._initial_actor_state(
                 actor_id=name,
                 kind="vehicle",
                 config=config,
-                default_status="moving",
+                default_status="waiting" if has_start_delay else "moving",
             )
+            if has_start_delay:
+                self.vehicles[name]["speed"] = 0.0
+                self.vehicles[name]["target_speed"] = 0.0
+                self.vehicles[name]["reason"] = "start-delay"
             self.route_indexes[name] = 0
 
         for idx, config in enumerate(self.scenario.get("obstacles", []), start=1):
             obstacle_id = str(config.get("id", idx))
             self._obstacle_configs[obstacle_id] = config
-            status = "moving" if config.get("route") else "static"
+            if config.get("triggered_by_vehicle_stop"):
+                status = "waiting"
+            else:
+                status = "moving" if config.get("route") else "static"
             self._obstacles[obstacle_id] = self._initial_actor_state(
                 actor_id=obstacle_id,
                 kind=str(config.get("kind", "obstacle")),
@@ -146,6 +154,14 @@ class WorldSimulation:
     def _advance_vehicle(self, name: str) -> None:
         vehicle_config = self._vehicle_configs[name]
         vehicle = self.vehicles[name]
+        if self.elapsed_seconds < float(vehicle_config.get("start_delay_seconds", 0.0)):
+            vehicle["speed"] = 0.0
+            vehicle["target_speed"] = 0.0
+            vehicle["status"] = "waiting"
+            vehicle["reason"] = "start-delay"
+            vehicle["risk_object_id"] = None
+            return
+
         control = self._active_control(name)
         if control and control["action"] in {"stop", "brake"}:
             vehicle["target_speed"] = 0.0
@@ -175,14 +191,39 @@ class WorldSimulation:
             obstacle["target_speed"] = 0.0
             obstacle["status"] = "static"
             return
+        if obstacle["status"] == "done":
+            obstacle["speed"] = 0.0
+            obstacle["target_speed"] = 0.0
+            return
+        if obstacle_config.get("triggered_by_vehicle_stop") and obstacle["status"] == "waiting":
+            if not self._triggered_obstacle_should_cross(obstacle_id, obstacle_config):
+                obstacle["speed"] = 0.0
+                obstacle["target_speed"] = 0.0
+                return
+            obstacle["status"] = "crossing"
+
         obstacle["target_speed"] = obstacle["base_speed"]
-        obstacle["status"] = "moving" if obstacle["target_speed"] > 0 else "stopped"
+        if obstacle["status"] != "crossing":
+            obstacle["status"] = "moving" if obstacle["target_speed"] > 0 else "stopped"
         self._advance_actor(
             actor=obstacle,
             config=obstacle_config,
             route_key=_actor_key("obstacle", obstacle_id),
             acceleration=float(obstacle_config.get("accel_mps2", 9999.0)),
             deceleration=float(obstacle_config.get("decel_mps2", 9999.0)),
+        )
+
+    def _triggered_obstacle_should_cross(self, obstacle_id: str, config: dict[str, Any]) -> bool:
+        vehicle_name = config.get("triggered_by_vehicle_stop")
+        if not isinstance(vehicle_name, str):
+            return True
+        vehicle = self.vehicles.get(vehicle_name)
+        if not vehicle:
+            return False
+        expected_risk = config.get("trigger_risk_object_id", obstacle_id)
+        return (
+            vehicle.get("status") == "stopped"
+            and vehicle.get("risk_object_id") == expected_risk
         )
 
     def _active_control(self, vehicle_name: str) -> dict[str, Any] | None:
@@ -201,10 +242,10 @@ class WorldSimulation:
         route_key: str,
         acceleration: float,
         deceleration: float,
-    ) -> None:
+    ) -> bool:
         route = config.get("route", [])
         if not route:
-            return
+            return False
 
         target_speed = max(float(actor.get("target_speed", 0.0)), 0.0)
         current_speed = max(float(actor.get("speed", 0.0)), 0.0)
@@ -212,7 +253,7 @@ class WorldSimulation:
         actor["speed"] = self._approach(current_speed, target_speed, rate * self.tick_seconds)
         if actor["speed"] <= 1e-6:
             actor["speed"] = 0.0
-            return
+            return False
 
         route_idx = min(self.route_indexes[route_key], len(route) - 1)
         segment = route[route_idx]
@@ -235,8 +276,19 @@ class WorldSimulation:
                         self.route_indexes[route_key] += 1
                     elif config.get("loop_route"):
                         self.route_indexes[route_key] = 0
+                    else:
+                        actor["speed"] = 0.0
+                        actor["target_speed"] = 0.0
+                        actor["status"] = str(config.get("post_route_status", actor.get("status", "stopped")))
+                        return True
                     next_segment = route[self.route_indexes[route_key]]
                     actor["heading"] = float(next_segment.get("heading", actor["heading"]))
+                elif route_idx >= len(route) - 1 and config.get("post_route_status"):
+                    actor["speed"] = 0.0
+                    actor["target_speed"] = 0.0
+                    actor["status"] = str(config["post_route_status"])
+                    return True
+        return False
 
     @staticmethod
     def _approach(current: float, target: float, max_delta: float) -> float:

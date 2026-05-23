@@ -72,18 +72,28 @@ def validate_scenario(scenario: dict[str, Any], path: Path | None = None) -> Non
             raise ScenarioError(f"{label}: vehicle {vehicle_name} needs start x/y")
         if not isinstance(route, list) or not route:
             raise ScenarioError(f"{label}: vehicle {vehicle_name} needs a non-empty route")
-        for segment in route:
-            if segment.get("axis") not in ("x", "y"):
-                raise ScenarioError(f"{label}: route axis must be x or y")
-            if float(segment.get("direction", 0)) == 0.0:
-                raise ScenarioError(f"{label}: route direction cannot be zero")
+        validate_route(route, label)
 
     obstacles = scenario.get("obstacles", [])
     if not isinstance(obstacles, list):
         raise ScenarioError(f"{label}: obstacles must be a list")
     for idx, obstacle in enumerate(obstacles, start=1):
-        if "x" not in obstacle or "y" not in obstacle:
+        start = obstacle.get("start") if isinstance(obstacle.get("start"), dict) else obstacle
+        if "x" not in start or "y" not in start:
             raise ScenarioError(f"{label}: obstacle {idx} needs x/y")
+        route = obstacle.get("route", [])
+        if route:
+            if not isinstance(route, list):
+                raise ScenarioError(f"{label}: obstacle {idx} route must be a list")
+            validate_route(route, label)
+
+
+def validate_route(route: list[dict[str, Any]], label: str) -> None:
+    for segment in route:
+        if segment.get("axis") not in ("x", "y"):
+            raise ScenarioError(f"{label}: route axis must be x or y")
+        if float(segment.get("direction", 0)) == 0.0:
+            raise ScenarioError(f"{label}: route direction cannot be zero")
 
 
 def public_metadata(scenario: dict[str, Any]) -> dict[str, Any]:

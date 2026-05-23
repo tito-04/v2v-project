@@ -6,7 +6,9 @@ This project implements a CAM + CPM V2V simulation with:
 - two vanetza-nap stations (`lead-vanetza`, `ego-vanetza`)
 - deterministic world generator with selectable scenarios
 - lead vehicle CAM and CPM publisher
-- ego vehicle 3D UI dashboard
+- ego vehicle split-screen 3D UI dashboard
+- dynamic pedestrian occlusion and vehicle brake/stop reactions
+- packet delay/loss observability for CAM and CPM
 - runtime network impairment controls (netem)
 
 ## Quick start
@@ -37,11 +39,13 @@ You can change the host port with `UI_HOST_PORT` in `.env`.
 
 ## Scenarios
 
-Scenarios live in `scenarios/*.json`. They define vehicle starts/routes, static obstacles, road layout, and optional rectangular occluders.
+Scenarios live in `scenarios/*.json`. They define vehicle starts/routes, static or moving obstacles, road layout, and optional rectangular occluders.
+
+Obstacles can be legacy static objects (`x`, `y`) or dynamic actors with `kind`, `start`, `route`, `speed_mps`, `dimensions`, and `blocks_vehicle_path`.
 
 Available initial scenarios:
 
-- `intersection-occlusion`: current intersection demo with an occluding building.
+- `intersection-occlusion`: dynamic intersection demo with an occluding building and a pedestrian crossing the road.
 - `straight-obstacles`: old straight-road demo with ego and lead driving east past multiple obstacles.
 
 CLI:
@@ -61,6 +65,13 @@ You can also set `SCENARIO_NAME` in `.env`, or set `SCENARIO_FILE` to a custom J
 
 ```bash
 ./scripts/netem_profiles.sh apply mild lead-vanetza eth0
+```
+
+- Isolate delay or loss:
+
+```bash
+./scripts/netem_profiles.sh apply delay-only lead-vanetza eth0
+./scripts/netem_profiles.sh apply loss-only lead-vanetza eth0
 ```
 
 - Clear impairment:

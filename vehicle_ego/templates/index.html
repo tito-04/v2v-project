@@ -3,14 +3,22 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>V2V CAM 3D Dashboard</title>
+    <title>V2V Dynamic Occlusion Dashboard</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
-    <div id="overlay">
-      <h1>V2V CAM 3D Dashboard</h1>
-      <div class="subtitle">Ego observer view (lead position from CAMs received by ego)</div>
-      <div id="metrics"></div>
+    <div id="hud">
+      <section class="view-label" id="left-label">
+        <div class="eyebrow">Ground truth</div>
+        <div class="title">World Truth</div>
+        <div class="meta">waiting for world state</div>
+      </section>
+      <section class="view-label" id="right-label">
+        <div class="eyebrow">Vehicle knowledge</div>
+        <div class="title">Ego World Model</div>
+        <div class="meta">waiting for ego model</div>
+      </section>
+      <section id="metrics"></section>
     </div>
     <div id="scene"></div>
 

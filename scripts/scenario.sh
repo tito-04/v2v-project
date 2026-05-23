@@ -83,8 +83,10 @@ smoke_scenario() {
   sample_topic "main world/pos/obstacle sample" "main-broker" "world/pos/obstacle/+" "5"
   sample_topic "lead broker vanetza/in/cam sample" "lead-broker" "vanetza/in/cam" "8"
   sample_topic "ego broker vanetza/out/cam sample" "ego-broker" "vanetza/out/cam" "12" "8"
+  sample_topic "main world/tx/cam sample" "main-broker" "world/tx/cam" "5"
   sample_topic "lead broker vanetza/in/cpm sample" "lead-broker" "vanetza/in/cpm" "20" "10"
   sample_topic "ego broker vanetza/out/cpm sample" "ego-broker" "vanetza/out/cpm" "20" "10"
+  sample_topic "main world/tx/cpm sample" "main-broker" "world/tx/cpm" "20" "10"
 
   printf '\n== ego status api ==\n'
   curl -fsS "http://localhost:${UI_HOST_PORT}/api/status"

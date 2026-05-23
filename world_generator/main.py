@@ -15,6 +15,7 @@ TOPIC_LEAD = os.getenv("WORLD_TOPIC_LEAD", "world/pos/lead")
 TOPIC_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
 TOPIC_OBSTACLE = os.getenv("WORLD_TOPIC_OBSTACLE", "world/pos/obstacle")
 TOPIC_SCENARIO = os.getenv("WORLD_TOPIC_SCENARIO", "world/scenario")
+TOPIC_CONTROL = os.getenv("WORLD_TOPIC_CONTROL", "world/control")
 
 
 def env_float(name: str, fallback: float) -> float:
@@ -43,13 +44,24 @@ def connect_client() -> mqtt.Client:
                 raise
 
 
-def publish_position(client: mqtt.Client, topic: str, x: float, y: float, heading: float, speed: float) -> None:
+def publish_actor_position(client: mqtt.Client, topic: str, actor: dict[str, Any]) -> None:
+    timestamp = time.time()
     payload = {
-        "x": x,
-        "y": y,
-        "heading": heading,
-        "speed": speed,
-        "timestamp": time.time(),
+        "id": actor.get("id"),
+        "kind": actor.get("kind", "vehicle"),
+        "x": actor["x"],
+        "y": actor.get("y", 0.0),
+        "heading": actor.get("heading", 0.0),
+        "speed": actor.get("speed", 0.0),
+        "target_speed": actor.get("target_speed", 0.0),
+        "status": actor.get("status", "moving"),
+        "reason": actor.get("reason", ""),
+        "risk_object_id": actor.get("risk_object_id"),
+        "blocks_vehicle_path": bool(actor.get("blocks_vehicle_path", False)),
+        "width": actor.get("width"),
+        "length": actor.get("length"),
+        "timestamp": timestamp,
+        "updated_at": timestamp,
     }
     client.publish(topic, json.dumps(payload), qos=1)
 
@@ -68,6 +80,25 @@ if __name__ == "__main__":
 
     client = connect_client()
     simulation = WorldSimulation(scenario, tick_seconds, step_meters)
+
+    def on_control(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+        try:
+            vehicle_name = msg.topic.split("/")[-1]
+            payload = json.loads(msg.payload.decode("utf-8"))
+            simulation.apply_control(
+                vehicle_name=vehicle_name,
+                action=str(payload.get("action", "stop")),
+                reason=str(payload.get("reason", "")),
+                risk_object_id=payload.get("risk_object_id"),
+                ttl_seconds=float(payload.get("ttl_seconds", max(tick_seconds * 3, 0.5))),
+            )
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            print(f"control parse error: {exc}")
+
+    client.on_message = lambda _c, _u, _m: None
+    client.message_callback_add(f"{TOPIC_CONTROL}/+", on_control)
+    client.subscribe(f"{TOPIC_CONTROL}/+", qos=1)
+
     publish_scenario(client, scenario)
     print(f"Loaded scenario: {scenario['name']}")
 
@@ -77,25 +108,18 @@ if __name__ == "__main__":
 
         lead = simulation.vehicles["lead"]
         ego = simulation.vehicles["ego"]
-        publish_position(client, TOPIC_LEAD, lead["x"], lead["y"], lead["heading"], lead["speed"])
-        publish_position(client, TOPIC_EGO, ego["x"], ego["y"], ego["heading"], ego["speed"])
+        publish_actor_position(client, TOPIC_LEAD, lead)
+        publish_actor_position(client, TOPIC_EGO, ego)
 
         for idx, obstacle in enumerate(simulation.obstacles(), start=1):
             obstacle_id = obstacle.get("id", idx)
             topic = f"{TOPIC_OBSTACLE}/{obstacle_id}"
-            publish_position(
-                client,
-                topic,
-                float(obstacle["x"]),
-                float(obstacle.get("y", 0.0)),
-                float(obstacle.get("heading", 0.0)),
-                float(obstacle.get("speed", 0.0)),
-            )
+            publish_actor_position(client, topic, obstacle)
 
         print(
             f"tick scenario={scenario['name']} "
-            f"ego=({ego['x']:.1f},{ego['y']:.1f}) heading={ego['heading']:.0f} "
-            f"lead=({lead['x']:.1f},{lead['y']:.1f}) heading={lead['heading']:.0f} "
+            f"ego=({ego['x']:.1f},{ego['y']:.1f}) status={ego['status']} "
+            f"lead=({lead['x']:.1f},{lead['y']:.1f}) status={lead['status']} "
             f"obstacles={len(simulation.obstacles())}"
         )
         time.sleep(tick_seconds)

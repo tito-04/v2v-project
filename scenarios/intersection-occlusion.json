@@ -1,7 +1,7 @@
 {
   "name": "intersection-occlusion",
   "title": "Intersection Occlusion",
-  "description": "Ego turns south at an intersection while the lead vehicle detects an obstacle near an occluding building.",
+  "description": "Ego turns south at an intersection while a pedestrian emerges from behind an occluding building.",
   "defaults": {
     "tick_seconds": 1.0,
     "step_meters": 2.0
@@ -44,6 +44,8 @@
   "vehicles": {
     "ego": {
       "start": {"x": 20, "y": 4, "heading": 0},
+      "accel_mps2": 6.0,
+      "decel_mps2": 12.0,
       "route": [
         {
           "axis": "x",
@@ -64,6 +66,8 @@
     },
     "lead": {
       "start": {"x": 204, "y": 200, "heading": 270},
+      "accel_mps2": 6.0,
+      "decel_mps2": 12.0,
       "route": [
         {
           "axis": "y",
@@ -74,7 +78,37 @@
     }
   },
   "obstacles": [
-    {"id": "1", "x": 204, "y": -14, "heading": 0, "speed": 0}
+    {
+      "id": "pedestrian-1",
+      "kind": "pedestrian",
+      "start": {"x": 190, "y": -14, "heading": 0},
+      "speed_mps": 1.8,
+      "dimensions": {"x": 1.2, "y": 1.2},
+      "blocks_vehicle_path": true,
+      "loop_route": true,
+      "route": [
+        {
+          "axis": "x",
+          "direction": 1,
+          "heading": 0,
+          "until": {"op": ">=", "value": 218},
+          "on_reach": {
+            "snap": {"x": 218, "heading": 180},
+            "next_segment": true
+          }
+        },
+        {
+          "axis": "x",
+          "direction": -1,
+          "heading": 180,
+          "until": {"op": "<=", "value": 190},
+          "on_reach": {
+            "snap": {"x": 190, "heading": 0},
+            "next_segment": true
+          }
+        }
+      ]
+    }
   ],
   "reset": {
     "mode": "all",

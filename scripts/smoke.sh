@@ -98,6 +98,7 @@ docker compose ps
 sample_topic "main world/pos/lead sample" "main-broker" "world/pos/lead" "5"
 sample_topic "main world/pos/ego sample" "main-broker" "world/pos/ego" "5"
 sample_topic "lead broker vanetza/in/cam sample" "lead-broker" "vanetza/in/cam" "6"
+sample_topic "main world/tx/cam sample" "main-broker" "world/tx/cam" "5"
 sample_ego_cam_out_with_recovery
 
 api_status "ego status api baseline"

@@ -122,6 +122,7 @@ services:
       - WORLD_TOPIC_EGO=${WORLD_TOPIC_EGO:-world/pos/ego}
       - WORLD_TOPIC_OBSTACLE=${WORLD_TOPIC_OBSTACLE:-world/pos/obstacle}
       - WORLD_TOPIC_SCENARIO=${WORLD_TOPIC_SCENARIO:-world/scenario}
+      - WORLD_TOPIC_CONTROL=${WORLD_TOPIC_CONTROL:-world/control}
       - WORLD_TICK_SECONDS=${WORLD_TICK_SECONDS:-}
       - X_STEP_METERS=${X_STEP_METERS:-}
     depends_on:
@@ -147,6 +148,9 @@ services:
       - WORLD_TOPIC_LEAD=${WORLD_TOPIC_LEAD:-world/pos/lead}
       - WORLD_TOPIC_EGO=${WORLD_TOPIC_EGO:-world/pos/ego}
       - WORLD_TOPIC_OBSTACLE=${WORLD_TOPIC_OBSTACLE:-world/pos/obstacle}
+      - WORLD_TOPIC_CONTROL=${WORLD_TOPIC_CONTROL:-world/control}
+      - WORLD_TOPIC_TX_CAM=${WORLD_TOPIC_TX_CAM:-world/tx/cam}
+      - WORLD_TOPIC_TX_CPM=${WORLD_TOPIC_TX_CPM:-world/tx/cpm}
       - WORLD_TICK_SECONDS=${WORLD_TICK_SECONDS:-1.0}
       - CAM_IN_TOPIC=${CAM_IN_TOPIC:-vanetza/in/cam}
       - CAM_TIME_TOPIC=${CAM_TIME_TOPIC:-vanetza/time/cam}
@@ -183,6 +187,9 @@ services:
       - WORLD_TOPIC_LEAD=${WORLD_TOPIC_LEAD:-world/pos/lead}
       - WORLD_TOPIC_OBSTACLE=${WORLD_TOPIC_OBSTACLE:-world/pos/obstacle}
       - WORLD_TOPIC_SCENARIO=${WORLD_TOPIC_SCENARIO:-world/scenario}
+      - WORLD_TOPIC_CONTROL=${WORLD_TOPIC_CONTROL:-world/control}
+      - WORLD_TOPIC_TX_CAM=${WORLD_TOPIC_TX_CAM:-world/tx/cam}
+      - WORLD_TOPIC_TX_CPM=${WORLD_TOPIC_TX_CPM:-world/tx/cpm}
       - CPM_OUT_TOPIC=${CPM_OUT_TOPIC:-vanetza/out/cpm}
       - CAM_OUT_TOPIC=${CAM_OUT_TOPIC:-vanetza/out/cam}
       - CAM_TIME_TOPIC=${CAM_TIME_TOPIC:-vanetza/time/cam}

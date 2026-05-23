@@ -2,9 +2,9 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 apply <baseline|mild|severe|blackout> <container> <interface>"
+  echo "Usage: $0 apply <baseline|mild|severe|delay-only|loss-only|blackout> <container> <interface>"
   echo "       $0 clear <container> <interface>"
-  echo "       $0 <baseline|mild|severe|blackout> [container] [interface]"
+  echo "       $0 <baseline|mild|severe|delay-only|loss-only|blackout> [container] [interface]"
 }
 
 if [[ $# -lt 1 ]]; then
@@ -31,6 +31,12 @@ apply_profile() {
     severe)
       docker exec "${container}" tc qdisc replace dev "${iface}" root netem delay 800ms 200ms loss 25%
       ;;
+    delay-only)
+      docker exec "${container}" tc qdisc replace dev "${iface}" root netem delay 900ms 180ms loss 0%
+      ;;
+    loss-only)
+      docker exec "${container}" tc qdisc replace dev "${iface}" root netem loss 35%
+      ;;
     blackout)
       docker exec "${container}" tc qdisc replace dev "${iface}" root netem loss 100%
       ;;
@@ -51,7 +57,7 @@ clear_profile() {
 }
 
 case "${action}" in
-  baseline|mild|severe|blackout)
+  baseline|mild|severe|delay-only|loss-only|blackout)
     apply_profile "${action}" "${2:-${default_container}}" "${3:-${default_iface}}"
     ;;
   apply)

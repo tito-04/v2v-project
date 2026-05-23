@@ -21,17 +21,23 @@
 ```
 
 ## Baseline
-- Start stack and show smooth CAM updates in 3D UI.
-- Metrics should show low CAM age and stale=no.
-- When the lead sees an obstacle, CPM should appear and the UI should show V2V detection active.
+- Start stack and show the split 3D UI.
+- Left panel ("World Truth") should show ego, lead, the moving pedestrian, the occluding building, crosswalk, and vehicle brake state.
+- Right panel ("Ego World Model") should initially know less than the world truth, then gain CAM/CPM/direct detections as packets arrive or the pedestrian becomes visible.
+- Metrics should show low CAM/CPM loss and low delay.
+- When lead or ego detects a path-risk pedestrian, the relevant vehicle should brake/stop and show red brake lights.
 
 ## Mild profile
 - Apply netem mild profile to V2V path.
-- Show slight delay growth and occasional stale transitions.
+- Show slight delay growth, pending packets, and occasional stale/ghost model objects.
 
 ## Severe profile
 - Apply netem severe profile.
-- Show obvious lag, reduced update responsiveness, and stale warnings.
+- Show obvious lag, higher loss, reduced ego model responsiveness, and delayed braking when the ego depends on CPM.
+
+## Isolated impairment
+- Apply `delay-only` to show the model lagging while packets still arrive.
+- Apply `loss-only` to show missing packets, stale objects, and rising loss percentage without large delay.
 
 ## Recovery
 - Clear netem profile.

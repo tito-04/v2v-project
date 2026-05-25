@@ -217,6 +217,11 @@ def update_direct_perception_locked(now: float) -> None:
     ego = state["self"]
     state["ego_model"]["self"] = dict(ego)
 
+    for obj in state["ego_model"]["objects"].values():
+        if obj.get("source") == "direct":
+            obj["stale"] = True
+            obj["in_ego_fov"] = False
+
     candidates: dict[str, dict[str, Any]] = {}
     for vehicle_name, vehicle in state["world"]["vehicles"].items():
         if vehicle_name != "ego":

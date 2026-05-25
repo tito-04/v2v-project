@@ -1,4 +1,5 @@
 import * as THREE from "./vendor/three.module.js";
+import { STLLoader } from "./vendor/stl-loader.js";
 
 let current = {
   self: { x: 10, y: 0, heading: 0, speed: 0, status: "loading" },
@@ -8,6 +9,9 @@ let current = {
   metrics: { stale: true },
   scenario: null,
 };
+
+let vehicleModelGeometry = null;
+let vehicleModelVersion = 0;
 
 function applyState(payload) {
   if (!payload) {
@@ -76,6 +80,8 @@ function init3d() {
 
   const worldView = createView("World Truth", 0x111a20);
   const modelView = createView("Ego World Model", 0x10141d);
+
+  loadVehicleModel();
 
   connectStateSource();
 
@@ -212,8 +218,7 @@ function buildVehicle() {
   const glassMat = new THREE.MeshStandardMaterial({ color: 0x0c2731, roughness: 0.25, metalness: 0.1 });
   const brakeMat = new THREE.MeshBasicMaterial({ color: 0x440000 });
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(12, 3, 6), bodyMat);
-  body.position.y = 1.9;
+  const body = createVehicleBodyMesh(bodyMat);
   group.add(body);
 
   const cabin = new THREE.Mesh(new THREE.BoxGeometry(5.5, 2.1, 4.5), glassMat);
@@ -227,8 +232,38 @@ function buildVehicle() {
   }
 
   group.userData.bodyMat = bodyMat;
+  group.userData.bodyMesh = body;
+  group.userData.vehicleModelVersion = vehicleModelGeometry ? vehicleModelVersion : 0;
   group.userData.brakeMat = brakeMat;
   return group;
+}
+
+function createVehicleBodyMesh(bodyMat) {
+  if (vehicleModelGeometry) {
+    const mesh = new THREE.Mesh(vehicleModelGeometry, bodyMat);
+    mesh.position.y = 3;
+    return mesh;
+  }
+  const body = new THREE.Mesh(new THREE.BoxGeometry(12, 3, 6), bodyMat);
+  body.position.y = 4;
+  return body;
+}
+
+function ensureVehicleModel(group) {
+  if (!vehicleModelGeometry) {
+    return;
+  }
+  if (group.userData.vehicleModelVersion === vehicleModelVersion) {
+    return;
+  }
+  if (group.userData.bodyMesh) {
+    group.remove(group.userData.bodyMesh);
+    disposeObject(group.userData.bodyMesh);
+  }
+  const body = createVehicleBodyMesh(group.userData.bodyMat);
+  group.add(body);
+  group.userData.bodyMesh = body;
+  group.userData.vehicleModelVersion = vehicleModelVersion;
 }
 
 function buildPedestrian() {
@@ -255,6 +290,9 @@ function buildObstacle() {
 }
 
 function updateActorMesh(mesh, actor, mode) {
+  if (actor.kind === "vehicle") {
+    ensureVehicleModel(mesh);
+  }
   const targetX = Number(actor.x ?? 0);
   const targetZ = Number(actor.y ?? 0);
   mesh.position.x += (targetX - mesh.position.x) * 0.18;
@@ -525,6 +563,33 @@ function createDashTexture(rotationRad = 0) {
     texture.rotation = rotationRad;
   }
   return texture;
+}
+
+function loadVehicleModel() {
+  if (typeof STLLoader === "undefined") {
+    return;
+  }
+  const loader = new STLLoader();
+  loader.load(
+    "/static/models/tesla.stl",
+    (geometry) => {
+      geometry.computeBoundingBox();
+      geometry.center();
+      const size = new THREE.Vector3();
+      geometry.boundingBox.getSize(size);
+      const maxSide = Math.max(size.x, size.z, 1e-6);
+      const scale = 12 / maxSide;
+      geometry.scale(scale, scale, scale);
+      geometry.rotateX(-Math.PI / 2);
+      geometry.rotateY(Math.PI / 2);
+      vehicleModelGeometry = geometry;
+      vehicleModelVersion += 1;
+    },
+    undefined,
+    (error) => {
+      console.warn("Failed to load STL model", error);
+    }
+  );
 }
 
 function addRoadsideTrees(scene) {

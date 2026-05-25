@@ -26,7 +26,10 @@
   },
   "vehicles": {
     "ego": {
-      "start": {"x": 20, "y": 4, "heading": 0},
+      "start": {"x": 20, "y": 12, "heading": 0},
+      "speed_mps": 12.0,
+      "accel_mps2": 6.0,
+      "decel_mps2": 12.0,
       "route": [
         {
           "axis": "x",
@@ -36,7 +39,10 @@
       ]
     },
     "lead": {
-      "start": {"x": 80, "y": 4, "heading": 0},
+      "start": {"x": 80, "y": 12, "heading": 0},
+      "speed_mps": 14.0,
+      "accel_mps2": 6.0,
+      "decel_mps2": 12.0,
       "route": [
         {
           "axis": "x",
@@ -47,9 +53,9 @@
     }
   },
   "obstacles": [
-    {"id": "1", "x": 100, "y": 4, "heading": 0, "speed": 0},
-    {"id": "2", "x": 200, "y": 4, "heading": 0, "speed": 0},
-    {"id": "3", "x": 300, "y": 4, "heading": 0, "speed": 0}
+    {"id": "1", "x": 100, "y": -12, "heading": 0, "speed": 0, "blocks_vehicle_path": false},
+    {"id": "2", "x": 200, "y": -12, "heading": 0, "speed": 0, "blocks_vehicle_path": false},
+    {"id": "3", "x": 300, "y": -12, "heading": 0, "speed": 0, "blocks_vehicle_path": false}
   ],
   "reset": {
     "mode": "any",

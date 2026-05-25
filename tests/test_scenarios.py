@@ -2,6 +2,7 @@ import unittest
 
 from vehicle_ego.model_state import cam_model_key, match_world_object_by_position, model_key_for_world_candidate, upsert_model_object
 from vehicle_lead.control_policy import lead_control_risk
+from vehicle_lead.cpm_payload import build_cpm_payload
 from world_generator.network_metrics import NetworkMetrics
 from world_generator.risk import first_risk_object, is_in_fov, is_in_path_corridor
 from world_generator.scenarios import available_scenarios, load_scenario, public_metadata
@@ -31,12 +32,13 @@ class WorldSimulationTests(unittest.TestCase):
         simulation = WorldSimulation(scenario, tick_seconds=1.0, step_meters=10.0)
 
         simulation.tick()
-        self.assertEqual(simulation.vehicles["ego"]["x"], 30.0)
-        self.assertEqual(simulation.vehicles["ego"]["y"], 4.0)
-        self.assertEqual(simulation.vehicles["lead"]["x"], 90.0)
-        self.assertEqual(simulation.vehicles["lead"]["y"], 4.0)
+        self.assertEqual(simulation.vehicles["ego"]["x"], 32.0)
+        self.assertEqual(simulation.vehicles["ego"]["y"], 12.0)
+        self.assertEqual(simulation.vehicles["lead"]["x"], 94.0)
+        self.assertEqual(simulation.vehicles["lead"]["y"], 12.0)
         self.assertEqual(simulation.vehicles["lead"]["heading"], 0.0)
         self.assertEqual(len(simulation.obstacles()), 3)
+        self.assertTrue(all(not obstacle["blocks_vehicle_path"] for obstacle in simulation.obstacles()))
 
         reset_seen = False
         for _ in range(60):
@@ -46,9 +48,9 @@ class WorldSimulationTests(unittest.TestCase):
 
         self.assertTrue(reset_seen)
         self.assertEqual(simulation.vehicles["ego"]["x"], 20.0)
-        self.assertEqual(simulation.vehicles["ego"]["y"], 4.0)
+        self.assertEqual(simulation.vehicles["ego"]["y"], 12.0)
         self.assertEqual(simulation.vehicles["lead"]["x"], 80.0)
-        self.assertEqual(simulation.vehicles["lead"]["y"], 4.0)
+        self.assertEqual(simulation.vehicles["lead"]["y"], 12.0)
 
     def test_intersection_ego_can_turn_south_without_cpm_risk(self) -> None:
         scenario = load_scenario("intersection-occlusion")
@@ -143,7 +145,20 @@ class WorldSimulationTests(unittest.TestCase):
             simulation.tick()
 
         self.assertLess(simulation.vehicles["ego"]["x"], 184.0)
-        simulation.apply_control("ego", "stop_at", reason="ego-model-risk", risk_object_id="pedestrian-1", ttl_seconds=20.0)
+        simulation.apply_control(
+            "ego",
+            "stop_at",
+            reason="ego-model-risk",
+            risk_object_id="pedestrian-1",
+            ttl_seconds=20.0,
+            stop_axis="x",
+            stop_value=184.0,
+            stop_direction=1,
+            stop_x=184.0,
+            stop_y=4.0,
+            stop_heading=0.0,
+            stop_route_index=0,
+        )
 
         for _ in range(80):
             simulation.tick()
@@ -168,7 +183,20 @@ class WorldSimulationTests(unittest.TestCase):
             simulation.tick()
 
         self.assertEqual(simulation.route_indexes["ego"], 1)
-        simulation.apply_control("ego", "stop_at", reason="ego-model-risk", risk_object_id="pedestrian-1", ttl_seconds=20.0)
+        simulation.apply_control(
+            "ego",
+            "stop_at",
+            reason="ego-model-risk",
+            risk_object_id="pedestrian-1",
+            ttl_seconds=20.0,
+            stop_axis="x",
+            stop_value=184.0,
+            stop_direction=1,
+            stop_x=184.0,
+            stop_y=4.0,
+            stop_heading=0.0,
+            stop_route_index=0,
+        )
         simulation.tick()
 
         ego = simulation.vehicles["ego"]
@@ -185,7 +213,20 @@ class WorldSimulationTests(unittest.TestCase):
         scenario = load_scenario("intersection-occlusion")
         simulation = WorldSimulation(scenario, tick_seconds=0.1, step_meters=1.0)
 
-        simulation.apply_control("ego", "stop_at", reason="ego-model-risk", risk_object_id="pedestrian-1", ttl_seconds=20.0)
+        simulation.apply_control(
+            "ego",
+            "stop_at",
+            reason="ego-model-risk",
+            risk_object_id="pedestrian-1",
+            ttl_seconds=20.0,
+            stop_axis="x",
+            stop_value=184.0,
+            stop_direction=1,
+            stop_x=184.0,
+            stop_y=4.0,
+            stop_heading=0.0,
+            stop_route_index=0,
+        )
         for _ in range(120):
             simulation.tick()
             if simulation.vehicles["ego"]["status"] == "stopped":
@@ -231,9 +272,9 @@ class WorldSimulationTests(unittest.TestCase):
 
         simulation.apply_control("lead", "stop", reason="test-risk", risk_object_id="obstacle_1", ttl_seconds=1.5)
         simulation.tick()
-        self.assertEqual(simulation.vehicles["lead"]["x"], 80.0)
-        self.assertEqual(simulation.vehicles["lead"]["speed"], 0.0)
-        self.assertEqual(simulation.vehicles["lead"]["status"], "stopped")
+        self.assertEqual(simulation.vehicles["lead"]["x"], 82.0)
+        self.assertEqual(simulation.vehicles["lead"]["speed"], 2.0)
+        self.assertEqual(simulation.vehicles["lead"]["status"], "braking")
 
         simulation.tick()
         self.assertEqual(simulation.vehicles["lead"]["x"], 90.0)
@@ -259,6 +300,29 @@ class RiskGeometryTests(unittest.TestCase):
 
 
 class NetworkMetricsTests(unittest.TestCase):
+    def test_cpm_payload_includes_non_blocking_obstacle_metadata(self) -> None:
+        payload = build_cpm_payload(
+            80.0,
+            12.0,
+            [{
+                "object_id": "1",
+                "kind": "obstacle",
+                "x": 100.0,
+                "y": -12.0,
+                "blocks_vehicle_path": False,
+            }],
+            base_lat=40.628300,
+            base_lon=-8.654400,
+            fov_range_m=80.0,
+            fov_half_angle_deg=60.0,
+        )
+
+        objects = payload["cpmContainers"][1]["containerData"]["perceivedObjects"]
+        self.assertEqual(len(objects), 1)
+        self.assertEqual(objects[0]["objectPublicId"], "1")
+        self.assertEqual(objects[0]["kind"], "obstacle")
+        self.assertFalse(objects[0]["blocksVehiclePath"])
+
     def test_tracks_delay_and_loss(self) -> None:
         metrics = NetworkMetrics(loss_timeout_seconds=2.0)
 
@@ -276,6 +340,20 @@ class NetworkMetricsTests(unittest.TestCase):
 
 
 class LeadControlPolicyTests(unittest.TestCase):
+    def test_non_blocking_objects_can_be_perceived_without_lead_control_risk(self) -> None:
+        perceived = [{
+            "object_id": "1",
+            "x": 100.0,
+            "y": -12.0,
+            "blocks_vehicle_path": False,
+        }]
+        risk = first_risk_object({"x": 80.0, "y": 12.0, "heading": 0.0}, perceived)
+
+        control_risk, held = lead_control_risk(risk, {"obstacle_1": {"id": "1"}}, None)
+
+        self.assertIsNone(control_risk)
+        self.assertIsNone(held)
+
     def test_lead_holds_pedestrian_risk_until_crossing_done(self) -> None:
         world_objects = {
             "obstacle_pedestrian-1": {"id": "pedestrian-1", "status": "crossing"}
@@ -322,6 +400,45 @@ class EgoModelMergeTests(unittest.TestCase):
         self.assertEqual(list(objects), ["lead"])
         self.assertEqual(objects["lead"]["source"], "direct")
         self.assertIn("cam", objects["lead"]["secondary_sources"])
+
+    def test_direct_obstacle_replaces_cpm_without_duplicate(self) -> None:
+        objects: dict[str, dict[str, object]] = {}
+        world_obstacle = {
+            "id": "1",
+            "kind": "obstacle",
+            "x": 100.0,
+            "y": -12.0,
+            "blocks_vehicle_path": False,
+        }
+        matched = match_world_object_by_position({"1": world_obstacle}, 100.4, -12.2, max_distance_m=5.0)
+        self.assertIsNotNone(matched)
+
+        key, matched_obstacle = matched
+        cpm_item = dict(matched_obstacle)
+        cpm_item.update({
+            "source": "cpm",
+            "observed_via": "v2v_cpm",
+            "detected_by": 101,
+            "updated_at": 10.0,
+            "stale": False,
+        })
+        upsert_model_object(objects, key, cpm_item, source_priority=20)
+
+        direct_key = model_key_for_world_candidate("object_1", world_obstacle)
+        direct_item = dict(world_obstacle)
+        direct_item.update({
+            "source": "direct",
+            "observed_via": "ego_sensor",
+            "updated_at": 11.0,
+            "stale": False,
+        })
+        upsert_model_object(objects, direct_key, direct_item, source_priority=30)
+
+        self.assertEqual(direct_key, "1")
+        self.assertEqual(list(objects), ["1"])
+        self.assertEqual(objects["1"]["source"], "direct")
+        self.assertFalse(objects["1"]["blocks_vehicle_path"])
+        self.assertIn("cpm", objects["1"]["secondary_sources"])
 
     def test_cpm_position_matches_world_pedestrian_key(self) -> None:
         world_objects = {

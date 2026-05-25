@@ -33,6 +33,8 @@ def model_key_for_world_candidate(source_key: str, obj: dict[str, Any]) -> str:
         return "lead"
     if obj.get("kind") == "pedestrian" or obj.get("id") == "pedestrian-1":
         return str(obj.get("id", source_key))
+    if source_key.startswith("object_") and obj.get("id") is not None:
+        return str(obj["id"])
     return source_key
 
 

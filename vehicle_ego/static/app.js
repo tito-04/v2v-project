@@ -326,13 +326,13 @@ function actorColor(actor, mode) {
     return 0x2ec4b6;
   }
   if (actor.source === "cpm") {
-    return 0x00e5ff;
+    return 0xffb000;
   }
   if (actor.source === "cam") {
     return 0xffb000;
   }
   if (actor.source === "direct") {
-    return 0x52b788;
+    return 0x2ec4b6;
   }
   if (actor.kind === "pedestrian") {
     return mode === "model" ? 0x00e5ff : 0xff5d73;

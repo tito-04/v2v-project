@@ -8,6 +8,7 @@ from typing import Any
 import paho.mqtt.client as mqtt
 
 from vehicle_lead.control_policy import lead_control_risk, public_object_id
+from vehicle_lead.cpm_payload import build_cpm_payload as build_cpm_payload_with_config
 from world_generator.scenarios import load_scenario_from_env
 from world_generator.risk import first_risk_object, is_in_fov
 
@@ -173,70 +174,15 @@ def build_cam_payload(x_meter: float, y_meter: float = 0.0, heading_deg: float =
 
 
 def build_cpm_payload(lead_x: float, lead_y: float, perceived: list[dict[str, Any]]) -> dict[str, Any]:
-    lat = BASE_LAT + meters_to_deg_lat(lead_y)
-    lon = BASE_LON + meters_to_deg_lon(lead_x, BASE_LAT)
-    objects = []
-    for idx, obj in enumerate(perceived):
-        # xCoordinate = longitudinal (forward, +X in our world)
-        # yCoordinate = lateral (sideways, +Y in our world)
-        dx = round(obj["x"] - lead_x, 2)
-        dy = round(obj["y"] - lead_y, 2)
-        objects.append({
-            "objectId": idx + 1,
-            "sensorIdList": [1],
-            "measurementDeltaTime": 0,
-            "position": {
-                "xCoordinate": {"value": dx, "confidence": 1},
-                "yCoordinate": {"value": dy, "confidence": 1},
-            },
-            "velocity": {
-                "cartesianVelocity": {
-                    "xVelocity": {"value": float(obj.get("speed", 0.0)), "confidence": 1},
-                    "yVelocity": {"value": 0.0, "confidence": 1},
-                }
-            },
-            "objectDimensionX": {"value": 2.0, "confidence": 1},
-            "objectDimensionY": {"value": 2.0, "confidence": 1},
-        })
-    return {
-        "managementContainer": {
-            "referenceTime": int((time.time() * 1000.0) % 65536),
-            "referencePosition": {
-                "latitude": lat,
-                "longitude": lon,
-                "positionConfidenceEllipse": {
-                    "semiMajorConfidence": 4095,
-                    "semiMajorOrientation": 0,
-                    "semiMinorConfidence": 4095,
-                },
-                "altitude": {"altitudeValue": 800001, "altitudeConfidence": 15},
-            },
-        },
-        "cpmContainers": [
-            {
-                "containerId": 3,
-                "containerData": [{
-                    "sensorId": 1,
-                    "sensorType": 1,
-                    "perceptionRegionShape": {
-                        "radial": {
-                            "range": int(FOV_RANGE_M),
-                            "horizontalOpeningAngleStart": int(90 - FOV_HALF_ANGLE_DEG),
-                            "horizontalOpeningAngleEnd": int(90 + FOV_HALF_ANGLE_DEG),
-                        }
-                    },
-                    "shadowingApplies": False,
-                }],
-            },
-            {
-                "containerId": 5,
-                "containerData": {
-                    "numberOfPerceivedObjects": len(objects),
-                    "perceivedObjects": objects,
-                },
-            },
-        ],
-    }
+    return build_cpm_payload_with_config(
+        lead_x,
+        lead_y,
+        perceived,
+        base_lat=BASE_LAT,
+        base_lon=BASE_LON,
+        fov_range_m=FOV_RANGE_M,
+        fov_half_angle_deg=FOV_HALF_ANGLE_DEG,
+    )
 
 
 def on_world_lead(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
@@ -385,7 +331,7 @@ if __name__ == "__main__":
         control_risk, lead_hold_risk_id = lead_control_risk(risk, objects_snapshot, lead_hold_risk_id)
         publish_control(world_client, "lead", control_risk)
 
-        cpm_objects = [obj for obj in perceived if obj.get("blocks_vehicle_path", False)]
+        cpm_objects = perceived
         if cpm_objects:
             print(f"FoV detected {len(perceived)} object(s), CPM objects={len(cpm_objects)}: {perceived}")
             cpm = build_cpm_payload(x_snapshot, y_snapshot, cpm_objects)

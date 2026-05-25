@@ -424,6 +424,7 @@ def on_cpm_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
                 continue
             for obj in container.get("containerData", {}).get("perceivedObjects", []):
                 obj_id = obj.get("objectId", 0)
+                public_id = obj.get("objectPublicId")
                 pos = obj.get("position", {})
                 dx = float(pos.get("xCoordinate", {}).get("value", 0.0))
                 dy = float(pos.get("yCoordinate", {}).get("value", 0.0))
@@ -445,10 +446,11 @@ def on_cpm_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
                     upsert_model_object(state["ego_model"]["objects"], key, item, source_priority=20)
                     continue
 
-                key = f"cpm_{sender_id if sender_id is not None else 'unknown'}_{obj_id}"
+                key_suffix = public_id if public_id is not None else obj_id
+                key = f"cpm_{sender_id if sender_id is not None else 'unknown'}_{key_suffix}"
                 item = {
                     "id": key,
-                    "kind": "remote-object",
+                    "kind": str(obj.get("kind", "remote-object")),
                     "x": obj_x,
                     "y": obj_y,
                     "heading": 0.0,
@@ -458,7 +460,7 @@ def on_cpm_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
                     "detected_by": sender_id,
                     "updated_at": now,
                     "stale": False,
-                    "blocks_vehicle_path": True,
+                    "blocks_vehicle_path": bool(obj.get("blocksVehiclePath", True)),
                 }
                 upsert_model_object(state["ego_model"]["objects"], key, item, source_priority=20)
         sync_legacy_locked()

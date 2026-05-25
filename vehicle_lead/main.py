@@ -7,6 +7,7 @@ from typing import Any
 
 import paho.mqtt.client as mqtt
 
+from vehicle_lead.control_policy import lead_control_risk, public_object_id
 from world_generator.scenarios import load_scenario_from_env
 from world_generator.risk import first_risk_object, is_in_fov
 
@@ -40,6 +41,7 @@ state_lock = threading.Lock()
 lead_state: dict[str, Any] = {"x": 50.0, "y": 0.0, "heading": 0.0, "speed": 0.0}
 world_objects: dict[str, dict[str, Any]] = {}
 tx_counters = {"cam": 0, "cpm": 0}
+lead_hold_risk_id: str | None = None
 
 
 def meters_to_deg_lon(meters: float, latitude_deg: float) -> float:
@@ -69,7 +71,7 @@ def objects_in_fov(vehicle_x: float, vehicle_y: float, heading_deg: float) -> li
             if rel_angle > 180.0:
                 rel_angle -= 360.0
             perceived.append({
-                "object_id": obj_id,
+                "object_id": public_object_id(obj, obj_id),
                 "x": obj["x"],
                 "y": obj["y"],
                 "heading": obj.get("heading", 0.0),
@@ -255,10 +257,12 @@ def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) ->
         payload = json.loads(msg.payload.decode("utf-8"))
         with state_lock:
             world_objects["ego"] = {
+                "id": "ego",
                 "x": float(payload["x"]),
                 "y": float(payload.get("y", 0.0)),
                 "heading": float(payload.get("heading", 0.0)),
                 "speed": float(payload.get("speed", 0.0)),
+                "status": payload.get("status", "moving"),
                 "kind": payload.get("kind", "vehicle"),
                 "blocks_vehicle_path": False,
             }
@@ -274,10 +278,12 @@ def on_world_obstacle(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessag
         obs_id = topic.split("/")[-1] if "/" in topic else "obstacle"
         with state_lock:
             world_objects[f"obstacle_{obs_id}"] = {
+                "id": str(payload.get("id") or obs_id),
                 "x": float(payload["x"]),
                 "y": float(payload.get("y", 0.0)),
                 "heading": float(payload.get("heading", 0.0)),
                 "speed": float(payload.get("speed", 0.0)),
+                "status": payload.get("status", "moving"),
                 "kind": payload.get("kind", "obstacle"),
                 "blocks_vehicle_path": bool(payload.get("blocks_vehicle_path", True)),
             }
@@ -374,7 +380,10 @@ if __name__ == "__main__":
             lookahead_m=70.0,
             half_width_m=7.0,
         )
-        publish_control(world_client, "lead", risk)
+        with state_lock:
+            objects_snapshot = {key: dict(obj) for key, obj in world_objects.items()}
+        control_risk, lead_hold_risk_id = lead_control_risk(risk, objects_snapshot, lead_hold_risk_id)
+        publish_control(world_client, "lead", control_risk)
 
         cpm_objects = [obj for obj in perceived if obj.get("blocks_vehicle_path", False)]
         if cpm_objects:

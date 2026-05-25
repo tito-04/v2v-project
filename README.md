@@ -45,7 +45,7 @@ Obstacles can be legacy static objects (`x`, `y`) or dynamic actors with `kind`,
 
 Available initial scenarios:
 
-- `intersection-occlusion`: dynamic intersection demo with an occluding building and a pedestrian that waits on the crosswalk until ego stops.
+- `intersection-occlusion`: dynamic intersection demo where the lead sees a pedestrian behind an occluding building, warns ego via CPM, and ego stops before entering the turn.
 - `straight-obstacles`: old straight-road demo with ego and lead driving east past multiple obstacles.
 
 CLI:

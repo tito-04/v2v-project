@@ -89,19 +89,55 @@ class WorldSimulation:
         reason: str = "",
         risk_object_id: str | None = None,
         ttl_seconds: float = 1.5,
+        stop_axis: str | None = None,
+        stop_value: float | int | str | None = None,
+        stop_direction: float | int | str | None = None,
+        stop_x: float | int | str | None = None,
+        stop_y: float | int | str | None = None,
+        stop_heading: float | int | str | None = None,
+        stop_route_index: int | str | None = None,
     ) -> None:
         if vehicle_name not in self.vehicles:
             return
         normalized_action = action.lower()
         if normalized_action in {"go", "resume", "clear"}:
+            self._apply_resume_speed(vehicle_name)
             self.controls.pop(vehicle_name, None)
             return
-        self.controls[vehicle_name] = {
+        control: dict[str, Any] = {
             "action": normalized_action,
             "reason": reason,
             "risk_object_id": risk_object_id,
             "expires_at": self.elapsed_seconds + max(ttl_seconds, self.tick_seconds),
         }
+        if stop_axis is not None:
+            control["stop_axis"] = str(stop_axis)
+        if stop_value is not None:
+            control["stop_value"] = float(stop_value)
+        if stop_direction is not None:
+            control["stop_direction"] = float(stop_direction)
+        if stop_x is not None:
+            control["stop_x"] = float(stop_x)
+        if stop_y is not None:
+            control["stop_y"] = float(stop_y)
+        if stop_heading is not None:
+            control["stop_heading"] = float(stop_heading)
+        if stop_route_index is not None:
+            control["stop_route_index"] = int(stop_route_index)
+        self.controls[vehicle_name] = control
+
+    def _apply_resume_speed(self, vehicle_name: str) -> None:
+        vehicle_config = self._vehicle_configs.get(vehicle_name, {})
+        if "resume_speed_mps" not in vehicle_config:
+            return
+        vehicle = self.vehicles.get(vehicle_name)
+        if not vehicle:
+            return
+        if vehicle.get("status") not in {"stopped", "braking"}:
+            return
+        resume_speed = float(vehicle_config["resume_speed_mps"])
+        vehicle["base_speed"] = resume_speed
+        vehicle["target_speed"] = resume_speed
 
     def tick(self) -> bool:
         self.elapsed_seconds += self.tick_seconds
@@ -163,7 +199,11 @@ class WorldSimulation:
             return
 
         control = self._active_control(name)
-        if control and control["action"] in {"stop", "brake"}:
+        if control and control["action"] == "stop_at":
+            if self._advance_vehicle_to_stop_line(name, control):
+                return
+
+        if control and control["action"] in {"stop", "brake", "stop_at"}:
             vehicle["target_speed"] = 0.0
             vehicle["status"] = "braking" if vehicle["speed"] > 0.05 else "stopped"
             vehicle["reason"] = control.get("reason", "")
@@ -182,6 +222,102 @@ class WorldSimulation:
         )
         if float(vehicle.get("target_speed", 0.0)) == 0.0 and float(vehicle.get("speed", 0.0)) == 0.0:
             vehicle["status"] = "stopped"
+
+    def _advance_vehicle_to_stop_line(self, name: str, control: dict[str, Any]) -> bool:
+        vehicle_config = self._vehicle_configs[name]
+        vehicle = self.vehicles[name]
+        stop_line = self._stop_line_for_control(vehicle_config, control)
+        if not stop_line:
+            return False
+
+        route = vehicle_config.get("route", [])
+        if not route:
+            return False
+        route_idx = min(self.route_indexes[name], len(route) - 1)
+        segment = route[route_idx]
+        vehicle["reason"] = control.get("reason", "")
+        vehicle["risk_object_id"] = control.get("risk_object_id")
+        axis = str(stop_line["axis"])
+        if segment.get("axis") != axis:
+            self._park_at_stop_line(name, vehicle, stop_line)
+            return True
+
+        route_index = stop_line.get("route_index")
+        if isinstance(route_index, int) and route_idx != route_index:
+            self._park_at_stop_line(name, vehicle, stop_line)
+            return True
+
+        direction = float(stop_line["direction"])
+        stop_value = float(stop_line["value"])
+        current_value = float(vehicle[axis])
+        distance_to_line = (stop_value - current_value) * direction
+
+        if distance_to_line <= 0.0:
+            self._park_at_stop_line(name, vehicle, stop_line)
+            return True
+
+        target_speed = float(vehicle.get("base_speed", 0.0))
+        current_speed = max(float(vehicle.get("speed", 0.0)), 0.0)
+        acceleration = float(vehicle_config.get("accel_mps2", 9999.0))
+        vehicle["target_speed"] = target_speed
+        vehicle["speed"] = self._approach(current_speed, target_speed, acceleration * self.tick_seconds)
+        vehicle["heading"] = float(segment.get("heading", vehicle.get("heading", 0.0)))
+
+        step = direction * float(vehicle["speed"]) * self.tick_seconds
+        next_value = current_value + step
+        crossed = (stop_value - next_value) * direction <= 0.0
+        if crossed:
+            self._park_at_stop_line(name, vehicle, stop_line)
+        else:
+            vehicle[axis] = next_value
+            vehicle["status"] = "approaching-stop"
+        return True
+
+    def _stop_line_for_control(
+        self,
+        vehicle_config: dict[str, Any],
+        control: dict[str, Any],
+    ) -> dict[str, float | str] | None:
+        configured = vehicle_config.get("cooperative_stop", {})
+        axis = control.get("stop_axis", configured.get("stop_axis"))
+        value = control.get("stop_value", configured.get("stop_value"))
+        direction = control.get("stop_direction", configured.get("stop_direction", 1))
+        if axis not in {"x", "y"} or value is None:
+            return None
+        direction = float(direction)
+        if direction == 0.0:
+            return None
+        pose = configured.get("stop_pose", {})
+        if not isinstance(pose, dict):
+            pose = {}
+        stop_line: dict[str, Any] = {"axis": axis, "value": float(value), "direction": direction, "pose": dict(pose)}
+        if "stop_x" in control:
+            stop_line["pose"]["x"] = control["stop_x"]
+        if "stop_y" in control:
+            stop_line["pose"]["y"] = control["stop_y"]
+        if "stop_heading" in control:
+            stop_line["pose"]["heading"] = control["stop_heading"]
+        if "stop_route_index" in control:
+            stop_line["pose"]["route_index"] = control["stop_route_index"]
+        if "route_index" in stop_line["pose"]:
+            stop_line["route_index"] = int(stop_line["pose"]["route_index"])
+        return stop_line
+
+    def _park_at_stop_line(self, route_key: str, vehicle: dict[str, Any], stop_line: dict[str, Any]) -> None:
+        axis = str(stop_line["axis"])
+        vehicle[axis] = float(stop_line["value"])
+        pose = stop_line.get("pose", {})
+        if isinstance(pose, dict):
+            for pose_axis in ("x", "y", "heading"):
+                if pose_axis in pose:
+                    vehicle[pose_axis] = float(pose[pose_axis])
+            if "route_index" in pose:
+                route = self._vehicle_configs[route_key].get("route", [])
+                max_index = max(len(route) - 1, 0)
+                self.route_indexes[route_key] = min(max(int(pose["route_index"]), 0), max_index)
+        vehicle["speed"] = 0.0
+        vehicle["target_speed"] = 0.0
+        vehicle["status"] = "stopped"
 
     def _advance_obstacle(self, obstacle_id: str) -> None:
         obstacle_config = self._obstacle_configs[obstacle_id]

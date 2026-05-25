@@ -43,9 +43,17 @@
   },
   "vehicles": {
     "ego": {
-      "start": {"x": 20, "y": 4, "heading": 0},
+      "start": {"x": 70, "y": 4, "heading": 0},
+      "speed_mps": 13.0,
       "accel_mps2": 6.0,
       "decel_mps2": 12.0,
+      "cooperative_stop": {
+        "risk_object_id": "pedestrian-1",
+        "stop_axis": "x",
+        "stop_value": 184,
+        "stop_direction": 1,
+        "stop_pose": {"x": 184, "y": 4, "heading": 0, "route_index": 0}
+      },
       "route": [
         {
           "axis": "x",
@@ -66,9 +74,10 @@
     },
     "lead": {
       "start": {"x": 204, "y": 200, "heading": 270},
+      "speed_mps": 16.0,
+      "resume_speed_mps": 13.0,
       "accel_mps2": 6.0,
       "decel_mps2": 12.0,
-      "start_delay_seconds": 3.0,
       "route": [
         {
           "axis": "y",

@@ -27,7 +27,8 @@ This project follows vanetza-nap CAM/CPM input/output conventions. The UI has a 
 - Topic: `world/control/<vehicle>`
   - Producers: vehicle-lead, vehicle-ego
   - Consumer: world-generator
-  - Payload: `{ "action": "stop"|"resume", "reason": string, "risk_object_id": string|null, "ttl_seconds": float, "timestamp": unix_seconds }`
+  - Payload: `{ "action": "stop"|"stop_at"|"resume", "reason": string, "risk_object_id": string|null, "ttl_seconds": float, "timestamp": unix_seconds }`
+  - `stop_at` may include `{ "stop_axis": "x"|"y", "stop_value": float, "stop_direction": -1|1, "stop_x": float, "stop_y": float, "stop_heading": float, "stop_route_index": int }`; the world keeps or parks the vehicle at that configured stop pose until the risk clears.
 
 - Topic: `world/tx/cam` and `world/tx/cpm`
   - Producer: vehicle-lead

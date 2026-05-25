@@ -8,7 +8,7 @@ from flask import Flask, jsonify, render_template
 from flask_socketio import SocketIO
 import paho.mqtt.client as mqtt
 
-from vehicle_ego.model_state import cam_model_key, model_key_for_world_candidate, upsert_model_object
+from vehicle_ego.model_state import cam_model_key, match_world_object_by_position, model_key_for_world_candidate, upsert_model_object
 from world_generator.network_metrics import NetworkMetrics
 from world_generator.risk import first_risk_object, is_in_fov
 from world_generator.scenarios import load_scenario_from_env, public_metadata
@@ -88,6 +88,7 @@ state: dict[str, Any] = {
     },
     "network": network_metrics.snapshot(),
 }
+cooperative_hold_risk_ids: set[str] = set()
 
 
 def meters_from_lon_delta(delta_lon: float, latitude: float) -> float:
@@ -136,9 +137,80 @@ def should_hold_for_crossing_pedestrian_locked() -> dict[str, Any] | None:
     for obj in active_model_objects_locked():
         if obj.get("kind") != "pedestrian":
             continue
+        world_obj = world_object_locked(str(obj.get("id", "")))
+        if world_obj and world_obj.get("status") == "done":
+            continue
         if obj.get("status") == "crossing" and obj.get("blocks_vehicle_path", False):
             return obj
     return None
+
+
+def world_object_locked(object_id: str) -> dict[str, Any] | None:
+    obj = state["world"]["objects"].get(object_id)
+    return obj if isinstance(obj, dict) else None
+
+
+def cooperative_intersection_risk_locked() -> dict[str, Any] | None:
+    if state.get("scenario", {}).get("name") != "intersection-occlusion":
+        return None
+    world_pedestrian = world_object_locked("pedestrian-1")
+    if world_pedestrian and world_pedestrian.get("status") == "done":
+        return None
+    for obj in active_model_objects_locked():
+        if obj.get("id") != "pedestrian-1":
+            continue
+        if obj.get("status") == "done":
+            continue
+        if obj.get("observed_via") == "v2v_cpm" and obj.get("blocks_vehicle_path", False):
+            return obj
+    return None
+
+
+def cooperative_hold_risk_locked() -> dict[str, Any] | None:
+    for risk_id in tuple(cooperative_hold_risk_ids):
+        world_obj = world_object_locked(risk_id)
+        if world_obj and world_obj.get("status") == "done":
+            cooperative_hold_risk_ids.discard(risk_id)
+            continue
+
+        model_obj = state["ego_model"]["objects"].get(risk_id)
+        item = dict(world_obj or model_obj or {})
+        item.update({
+            "id": risk_id,
+            "kind": item.get("kind", "pedestrian"),
+            "blocks_vehicle_path": True,
+        })
+        return item
+    return None
+
+
+def cooperative_stop_line_payload(risk: dict[str, Any]) -> dict[str, Any]:
+    stop_config = SCENARIO.get("vehicles", {}).get("ego", {}).get("cooperative_stop", {})
+    if not isinstance(stop_config, dict):
+        return {}
+    expected_risk = stop_config.get("risk_object_id")
+    if expected_risk and risk.get("id") != expected_risk:
+        return {}
+    axis = stop_config.get("stop_axis")
+    value = stop_config.get("stop_value")
+    if axis not in {"x", "y"} or value is None:
+        return {}
+    payload = {
+        "stop_axis": axis,
+        "stop_value": float(value),
+        "stop_direction": float(stop_config.get("stop_direction", 1)),
+    }
+    stop_pose = stop_config.get("stop_pose", {})
+    if isinstance(stop_pose, dict):
+        if "x" in stop_pose:
+            payload["stop_x"] = float(stop_pose["x"])
+        if "y" in stop_pose:
+            payload["stop_y"] = float(stop_pose["y"])
+        if "heading" in stop_pose:
+            payload["stop_heading"] = float(stop_pose["heading"])
+        if "route_index" in stop_pose:
+            payload["stop_route_index"] = int(stop_pose["route_index"])
+    return payload
 
 
 def update_direct_perception_locked(now: float) -> None:
@@ -192,13 +264,19 @@ def publish_ego_control_locked() -> None:
         return
 
     hold_risk = should_hold_for_crossing_pedestrian_locked()
-    risk = hold_risk or first_risk_object(
+    cooperative_risk = cooperative_intersection_risk_locked()
+    if cooperative_risk:
+        cooperative_hold_risk_ids.add(str(cooperative_risk.get("id")))
+    cooperative_hold_risk = cooperative_hold_risk_locked()
+    direct_risk = first_risk_object(
         state["ego_model"].get("self") or state["self"],
         active_model_objects_locked(),
         lookahead_m=70.0,
         half_width_m=7.0,
     )
-    action = "stop" if risk else "resume"
+    risk = cooperative_hold_risk or hold_risk or cooperative_risk or direct_risk
+    stop_line = cooperative_stop_line_payload(risk) if risk else {}
+    action = "stop_at" if risk and stop_line else ("stop" if risk else "resume")
     payload = {
         "action": action,
         "reason": "ego-model-risk" if risk else "",
@@ -206,6 +284,7 @@ def publish_ego_control_locked() -> None:
         "ttl_seconds": 0.8,
         "timestamp": time.time(),
     }
+    payload.update(stop_line)
     state["ego_model"]["last_action"] = payload
     control_client.publish(f"{TOPIC_WORLD_CONTROL}/ego", json.dumps(payload), qos=1)
 
@@ -321,6 +400,22 @@ def on_cpm_out(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> N
                 dy = float(pos.get("yCoordinate", {}).get("value", 0.0))
                 obj_x = sender_x + dx
                 obj_y = sender_y + dy
+                matched = match_world_object_by_position(state["world"]["objects"], obj_x, obj_y)
+                if matched:
+                    key, world_obj = matched
+                    item = dict(world_obj)
+                    item.update({
+                        "id": world_obj.get("id", key),
+                        "source": "cpm",
+                        "observed_via": "v2v_cpm",
+                        "detected_by": sender_id,
+                        "updated_at": now,
+                        "stale": False,
+                        "blocks_vehicle_path": bool(world_obj.get("blocks_vehicle_path", True)),
+                    })
+                    upsert_model_object(state["ego_model"]["objects"], key, item, source_priority=20)
+                    continue
+
                 key = f"cpm_{sender_id if sender_id is not None else 'unknown'}_{obj_id}"
                 item = {
                     "id": key,

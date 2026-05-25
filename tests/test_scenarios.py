@@ -1,8 +1,9 @@
 import unittest
 
-from vehicle_ego.model_state import cam_model_key, model_key_for_world_candidate, upsert_model_object
+from vehicle_ego.model_state import cam_model_key, match_world_object_by_position, model_key_for_world_candidate, upsert_model_object
+from vehicle_lead.control_policy import lead_control_risk
 from world_generator.network_metrics import NetworkMetrics
-from world_generator.risk import first_risk_object, is_in_path_corridor
+from world_generator.risk import first_risk_object, is_in_fov, is_in_path_corridor
 from world_generator.scenarios import available_scenarios, load_scenario, public_metadata
 from world_generator.simulation import WorldSimulation
 
@@ -49,40 +50,51 @@ class WorldSimulationTests(unittest.TestCase):
         self.assertEqual(simulation.vehicles["lead"]["x"], 80.0)
         self.assertEqual(simulation.vehicles["lead"]["y"], 4.0)
 
-    def test_intersection_ego_turns_south(self) -> None:
+    def test_intersection_ego_can_turn_south_without_cpm_risk(self) -> None:
         scenario = load_scenario("intersection-occlusion")
-        simulation = WorldSimulation(scenario, tick_seconds=1.0, step_meters=180.0)
+        simulation = WorldSimulation(scenario, tick_seconds=1.0, step_meters=2.0)
 
-        simulation.tick()
+        self.assertEqual(simulation.vehicles["ego"]["x"], 70.0)
+        self.assertEqual(simulation.vehicles["ego"]["y"], 4.0)
+        self.assertEqual(simulation.vehicles["ego"]["heading"], 0.0)
+
+        for _ in range(10):
+            simulation.tick()
+
         self.assertEqual(simulation.vehicles["ego"]["x"], 204.0)
         self.assertEqual(simulation.vehicles["ego"]["y"], 4.0)
         self.assertEqual(simulation.vehicles["ego"]["heading"], 270.0)
         self.assertEqual(simulation.route_indexes["ego"], 1)
 
         simulation.tick()
-        self.assertEqual(simulation.vehicles["ego"]["y"], -176.0)
+        self.assertEqual(simulation.vehicles["ego"]["y"], -9.0)
         self.assertEqual(simulation.vehicles["lead"]["heading"], 270.0)
 
-    def test_intersection_lead_waits_for_start_delay_then_moves(self) -> None:
+    def test_intersection_lead_moves_immediately_and_detects_before_ego_entry(self) -> None:
         scenario = load_scenario("intersection-occlusion")
-        simulation = WorldSimulation(scenario, tick_seconds=1.0, step_meters=2.0)
+        occluders = scenario["layout"]["occluders"]
+        simulation = WorldSimulation(scenario, tick_seconds=0.1, step_meters=1.0)
 
         lead = simulation.vehicles["lead"]
         self.assertEqual(lead["y"], 200.0)
-        self.assertEqual(lead["speed"], 0.0)
-        self.assertEqual(lead["status"], "waiting")
+        self.assertEqual(lead["status"], "moving")
 
-        simulation.tick()
-        self.assertEqual(simulation.vehicles["lead"]["y"], 200.0)
-        self.assertEqual(simulation.vehicles["lead"]["status"], "waiting")
+        detected = False
+        for _ in range(120):
+            simulation.tick()
+            lead = simulation.vehicles["lead"]
+            pedestrian = simulation.obstacles()[0]
+            detected = is_in_fov(
+                lead["x"], lead["y"], lead["heading"],
+                pedestrian["x"], pedestrian["y"],
+                80.0, 60.0, occluders,
+            )
+            if detected:
+                break
 
-        simulation.tick()
-        self.assertEqual(simulation.vehicles["lead"]["y"], 200.0)
-        self.assertEqual(simulation.vehicles["lead"]["status"], "waiting")
-
-        simulation.tick()
-        self.assertEqual(simulation.vehicles["lead"]["y"], 198.0)
+        self.assertTrue(detected)
         self.assertEqual(simulation.vehicles["lead"]["status"], "moving")
+        self.assertLess(simulation.vehicles["ego"]["x"], 184.0)
 
     def test_intersection_pedestrian_waits_for_ego_stop_trigger(self) -> None:
         scenario = load_scenario("intersection-occlusion")
@@ -101,6 +113,10 @@ class WorldSimulationTests(unittest.TestCase):
         self.assertEqual(pedestrian["status"], "waiting")
 
         simulation.apply_control("ego", "stop", reason="ego-model-risk", risk_object_id="pedestrian-1", ttl_seconds=5.0)
+        for _ in range(20):
+            simulation.tick()
+            if simulation.vehicles["ego"]["status"] == "stopped":
+                break
         simulation.tick()
         pedestrian = simulation.obstacles()[0]
         self.assertGreater(pedestrian["x"], 198.0)
@@ -118,6 +134,96 @@ class WorldSimulationTests(unittest.TestCase):
         self.assertEqual(pedestrian["x"], 218.0)
         self.assertEqual(pedestrian["speed"], 0.0)
         self.assertEqual(pedestrian["status"], "done")
+
+    def test_intersection_stop_at_keeps_ego_before_turn_for_pedestrian_cpm(self) -> None:
+        scenario = load_scenario("intersection-occlusion")
+        simulation = WorldSimulation(scenario, tick_seconds=0.1, step_meters=1.0)
+
+        for _ in range(85):
+            simulation.tick()
+
+        self.assertLess(simulation.vehicles["ego"]["x"], 184.0)
+        simulation.apply_control("ego", "stop_at", reason="ego-model-risk", risk_object_id="pedestrian-1", ttl_seconds=20.0)
+
+        for _ in range(80):
+            simulation.tick()
+            if simulation.vehicles["ego"]["status"] == "stopped":
+                break
+
+        ego = simulation.vehicles["ego"]
+        pedestrian = simulation.obstacles()[0]
+        self.assertEqual(ego["x"], 184.0)
+        self.assertEqual(ego["y"], 4.0)
+        self.assertEqual(ego["heading"], 0.0)
+        self.assertEqual(simulation.route_indexes["ego"], 0)
+        self.assertEqual(ego["status"], "stopped")
+        self.assertEqual(ego["risk_object_id"], "pedestrian-1")
+        self.assertEqual(pedestrian["status"], "crossing")
+
+    def test_intersection_late_stop_at_parks_ego_back_before_turn(self) -> None:
+        scenario = load_scenario("intersection-occlusion")
+        simulation = WorldSimulation(scenario, tick_seconds=0.1, step_meters=1.0)
+
+        while simulation.route_indexes["ego"] == 0:
+            simulation.tick()
+
+        self.assertEqual(simulation.route_indexes["ego"], 1)
+        simulation.apply_control("ego", "stop_at", reason="ego-model-risk", risk_object_id="pedestrian-1", ttl_seconds=20.0)
+        simulation.tick()
+
+        ego = simulation.vehicles["ego"]
+        pedestrian = simulation.obstacles()[0]
+        self.assertEqual(ego["x"], 184.0)
+        self.assertEqual(ego["y"], 4.0)
+        self.assertEqual(ego["heading"], 0.0)
+        self.assertEqual(simulation.route_indexes["ego"], 0)
+        self.assertEqual(ego["status"], "stopped")
+        self.assertEqual(ego["risk_object_id"], "pedestrian-1")
+        self.assertEqual(pedestrian["status"], "crossing")
+
+    def test_intersection_ego_resumes_turn_after_stop_line_control_clears(self) -> None:
+        scenario = load_scenario("intersection-occlusion")
+        simulation = WorldSimulation(scenario, tick_seconds=0.1, step_meters=1.0)
+
+        simulation.apply_control("ego", "stop_at", reason="ego-model-risk", risk_object_id="pedestrian-1", ttl_seconds=20.0)
+        for _ in range(120):
+            simulation.tick()
+            if simulation.vehicles["ego"]["status"] == "stopped":
+                break
+
+        self.assertEqual(simulation.vehicles["ego"]["x"], 184.0)
+        self.assertEqual(simulation.route_indexes["ego"], 0)
+
+        simulation.apply_control("ego", "resume")
+        for _ in range(80):
+            simulation.tick()
+            if simulation.route_indexes["ego"] == 1:
+                break
+
+        ego = simulation.vehicles["ego"]
+        self.assertEqual(simulation.route_indexes["ego"], 1)
+        self.assertEqual(ego["x"], 204.0)
+        self.assertEqual(ego["y"], 4.0)
+        self.assertEqual(ego["heading"], 270.0)
+
+    def test_intersection_lead_resumes_at_ego_speed_after_pedestrian_stop(self) -> None:
+        scenario = load_scenario("intersection-occlusion")
+        simulation = WorldSimulation(scenario, tick_seconds=0.1, step_meters=1.0)
+
+        self.assertEqual(simulation.vehicles["ego"]["base_speed"], 13.0)
+        self.assertEqual(simulation.vehicles["lead"]["base_speed"], 16.0)
+
+        simulation.apply_control("lead", "stop", reason="path-risk", risk_object_id="pedestrian-1", ttl_seconds=20.0)
+        for _ in range(40):
+            simulation.tick()
+            if simulation.vehicles["lead"]["status"] == "stopped":
+                break
+
+        self.assertEqual(simulation.vehicles["lead"]["status"], "stopped")
+        simulation.apply_control("lead", "resume")
+
+        self.assertEqual(simulation.vehicles["lead"]["base_speed"], simulation.vehicles["ego"]["base_speed"])
+        self.assertEqual(simulation.vehicles["lead"]["target_speed"], simulation.vehicles["ego"]["base_speed"])
 
     def test_vehicle_control_brakes_then_resumes_after_ttl(self) -> None:
         scenario = load_scenario("straight-obstacles")
@@ -169,6 +275,27 @@ class NetworkMetricsTests(unittest.TestCase):
         self.assertEqual(snapshot["cam"]["last_delay_sec"], 0.5)
 
 
+class LeadControlPolicyTests(unittest.TestCase):
+    def test_lead_holds_pedestrian_risk_until_crossing_done(self) -> None:
+        world_objects = {
+            "obstacle_pedestrian-1": {"id": "pedestrian-1", "status": "crossing"}
+        }
+        risk = {"object_id": "obstacle_pedestrian-1", "blocks_vehicle_path": True}
+
+        control_risk, held = lead_control_risk(risk, world_objects, None)
+        self.assertEqual(control_risk["object_id"], "pedestrian-1")
+        self.assertEqual(held, "pedestrian-1")
+
+        control_risk, held = lead_control_risk(None, world_objects, held)
+        self.assertEqual(control_risk["object_id"], "pedestrian-1")
+        self.assertEqual(held, "pedestrian-1")
+
+        world_objects["obstacle_pedestrian-1"]["status"] = "done"
+        control_risk, held = lead_control_risk(None, world_objects, held)
+        self.assertIsNone(control_risk)
+        self.assertIsNone(held)
+
+
 class EgoModelMergeTests(unittest.TestCase):
     def test_direct_and_cam_lead_share_one_model_key(self) -> None:
         objects: dict[str, dict[str, object]] = {}
@@ -195,6 +322,25 @@ class EgoModelMergeTests(unittest.TestCase):
         self.assertEqual(list(objects), ["lead"])
         self.assertEqual(objects["lead"]["source"], "direct")
         self.assertIn("cam", objects["lead"]["secondary_sources"])
+
+    def test_cpm_position_matches_world_pedestrian_key(self) -> None:
+        world_objects = {
+            "pedestrian-1": {
+                "id": "pedestrian-1",
+                "kind": "pedestrian",
+                "x": 198.0,
+                "y": -14.0,
+                "blocks_vehicle_path": True,
+                "status": "waiting",
+            }
+        }
+
+        matched = match_world_object_by_position(world_objects, 198.8, -13.4, max_distance_m=5.0)
+
+        self.assertIsNotNone(matched)
+        key, obj = matched
+        self.assertEqual(key, "pedestrian-1")
+        self.assertEqual(obj["id"], "pedestrian-1")
 
 
 if __name__ == "__main__":

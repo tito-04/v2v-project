@@ -25,7 +25,7 @@
 - Left panel ("World Truth") should show ego, lead, the waiting pedestrian, the occluding building, crosswalk, and vehicle brake state.
 - Right panel ("Ego World Model") should initially know less than the world truth, then gain CAM/CPM/direct detections as packets arrive or the pedestrian becomes visible.
 - Metrics should show low CAM/CPM loss and low delay.
-- When ego detects the path-risk pedestrian, ego should brake/stop; only then should the pedestrian cross and remain done on the far side.
+- In `intersection-occlusion`, the lead should detect the pedestrian first and send CPM. Ego should stop on the east-west segment before turning south; ego and lead should resume only after the pedestrian is done crossing.
 
 ## Mild profile
 - Apply netem mild profile to V2V path.

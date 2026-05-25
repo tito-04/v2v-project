@@ -1,6 +1,10 @@
 from typing import Any
 
 
+def distance_m(a: dict[str, Any], x: float, y: float) -> float:
+    return ((float(a.get("x", 0.0)) - x) ** 2 + (float(a.get("y", 0.0)) - y) ** 2) ** 0.5
+
+
 def upsert_model_object(
     objects: dict[str, dict[str, Any]],
     key: str,
@@ -35,7 +39,27 @@ def model_key_for_world_candidate(source_key: str, obj: dict[str, Any]) -> str:
 def cam_model_key(objects: dict[str, dict[str, Any]], x: float, y: float, station_id: Any) -> str:
     lead = objects.get("lead")
     if lead:
-        dist = ((x - float(lead.get("x", 0.0))) ** 2 + (y - float(lead.get("y", 0.0))) ** 2) ** 0.5
+        dist = distance_m(lead, x, y)
         if dist < 8.0 or lead.get("source") == "direct":
             return "lead"
     return f"cam_{station_id}" if station_id is not None else "cam_unknown"
+
+
+def match_world_object_by_position(
+    world_objects: dict[str, dict[str, Any]],
+    x: float,
+    y: float,
+    max_distance_m: float = 5.0,
+) -> tuple[str, dict[str, Any]] | None:
+    candidates = [
+        (distance_m(obj, x, y), key, obj)
+        for key, obj in world_objects.items()
+        if not obj.get("stale", False)
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    distance, key, obj = candidates[0]
+    if distance > max_distance_m:
+        return None
+    return key, obj

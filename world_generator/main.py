@@ -91,6 +91,13 @@ if __name__ == "__main__":
                 reason=str(payload.get("reason", "")),
                 risk_object_id=payload.get("risk_object_id"),
                 ttl_seconds=float(payload.get("ttl_seconds", max(tick_seconds * 3, 0.5))),
+                stop_axis=payload.get("stop_axis"),
+                stop_value=payload.get("stop_value"),
+                stop_direction=payload.get("stop_direction"),
+                stop_x=payload.get("stop_x"),
+                stop_y=payload.get("stop_y"),
+                stop_heading=payload.get("stop_heading"),
+                stop_route_index=payload.get("stop_route_index"),
             )
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             print(f"control parse error: {exc}")

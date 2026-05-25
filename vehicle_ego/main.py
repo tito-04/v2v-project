@@ -24,6 +24,7 @@ TOPIC_WORLD_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
 TOPIC_WORLD_LEAD = os.getenv("WORLD_TOPIC_LEAD", "world/pos/lead")
 TOPIC_WORLD_OBSTACLE = os.getenv("WORLD_TOPIC_OBSTACLE", "world/pos/obstacle")
 TOPIC_WORLD_SCENARIO = os.getenv("WORLD_TOPIC_SCENARIO", "world/scenario")
+TOPIC_WORLD_RESET = os.getenv("WORLD_TOPIC_RESET", "world/reset")
 TOPIC_WORLD_CONTROL = os.getenv("WORLD_TOPIC_CONTROL", "world/control")
 TOPIC_TX_CAM = os.getenv("WORLD_TOPIC_TX_CAM", "world/tx/cam")
 TOPIC_TX_CPM = os.getenv("WORLD_TOPIC_TX_CPM", "world/tx/cpm")
@@ -330,6 +331,21 @@ def on_world_scenario(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessag
     emit_state()
 
 
+def on_world_reset(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    try:
+        json.loads(msg.payload.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"world reset parse error: {exc}")
+        return
+
+    with state_lock:
+        state["ego_model"]["objects"] = {}
+        state["objects"] = {}
+        cooperative_hold_risk_ids.clear()
+        sync_legacy_locked()
+    emit_state()
+
+
 def on_world_ego(_client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
@@ -623,12 +639,14 @@ def start_mqtt() -> None:
     world_client.message_callback_add(TOPIC_WORLD_EGO, on_world_ego)
     world_client.message_callback_add(TOPIC_WORLD_LEAD, on_world_lead)
     world_client.message_callback_add(TOPIC_WORLD_SCENARIO, on_world_scenario)
+    world_client.message_callback_add(TOPIC_WORLD_RESET, on_world_reset)
     world_client.message_callback_add(f"{TOPIC_WORLD_OBSTACLE}/+", on_world_obstacle)
     world_client.message_callback_add(TOPIC_TX_CAM, on_tx)
     world_client.message_callback_add(TOPIC_TX_CPM, on_tx)
     world_client.subscribe(TOPIC_WORLD_EGO, qos=1)
     world_client.subscribe(TOPIC_WORLD_LEAD, qos=1)
     world_client.subscribe(TOPIC_WORLD_SCENARIO, qos=1)
+    world_client.subscribe(TOPIC_WORLD_RESET, qos=1)
     world_client.subscribe(f"{TOPIC_WORLD_OBSTACLE}/+", qos=1)
     world_client.subscribe(TOPIC_TX_CAM, qos=1)
     world_client.subscribe(TOPIC_TX_CPM, qos=1)

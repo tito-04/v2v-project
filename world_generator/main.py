@@ -16,6 +16,7 @@ TOPIC_EGO = os.getenv("WORLD_TOPIC_EGO", "world/pos/ego")
 TOPIC_OBSTACLE = os.getenv("WORLD_TOPIC_OBSTACLE", "world/pos/obstacle")
 TOPIC_SCENARIO = os.getenv("WORLD_TOPIC_SCENARIO", "world/scenario")
 TOPIC_CONTROL = os.getenv("WORLD_TOPIC_CONTROL", "world/control")
+TOPIC_RESET = os.getenv("WORLD_TOPIC_RESET", "world/reset")
 
 
 def env_float(name: str, fallback: float) -> float:
@@ -72,6 +73,11 @@ def publish_scenario(client: mqtt.Client, scenario: dict[str, Any]) -> None:
     client.publish(TOPIC_SCENARIO, json.dumps(payload), qos=1, retain=True)
 
 
+def publish_reset(client: mqtt.Client) -> None:
+    payload = {"reset_at": time.time()}
+    client.publish(TOPIC_RESET, json.dumps(payload), qos=1)
+
+
 if __name__ == "__main__":
     scenario = load_scenario_from_env()
     defaults = scenario.get("defaults", {})
@@ -111,6 +117,7 @@ if __name__ == "__main__":
 
     while True:
         if simulation.tick():
+            publish_reset(client)
             print("--- WORLD LOOP RESET ---")
 
         lead = simulation.vehicles["lead"]

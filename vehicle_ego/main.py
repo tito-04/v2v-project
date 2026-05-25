@@ -279,9 +279,33 @@ def publish_ego_control_locked() -> None:
         lookahead_m=70.0,
         half_width_m=7.0,
     )
-    risk = cooperative_hold_risk or hold_risk or cooperative_risk or direct_risk
-    stop_line = cooperative_stop_line_payload(risk) if risk else {}
-    action = "stop_at" if risk and stop_line else ("stop" if risk else "resume")
+    risk = None
+    cooperative_risk_active = False
+    if cooperative_hold_risk:
+        risk = cooperative_hold_risk
+        cooperative_risk_active = True
+    elif hold_risk:
+        risk = hold_risk
+    elif cooperative_risk:
+        risk = cooperative_risk
+        cooperative_risk_active = True
+    elif direct_risk:
+        risk = direct_risk
+
+    stop_line = {}
+    scenario_name = state.get("scenario", {}).get("name")
+    force_stop_no_line = scenario_name == "intersection-occlusion"
+    if risk and not cooperative_risk_active and not force_stop_no_line:
+        stop_line = cooperative_stop_line_payload(risk)
+
+    if not risk:
+        action = "resume"
+    elif force_stop_no_line or cooperative_risk_active:
+        action = "stop"
+    elif stop_line:
+        action = "stop_at"
+    else:
+        action = "stop"
     payload = {
         "action": action,
         "reason": "ego-model-risk" if risk else "",

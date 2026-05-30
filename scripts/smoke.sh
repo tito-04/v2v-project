@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UI_HOST_PORT="${UI_HOST_PORT:-18080}"
 UI_STATUS_URL="${UI_STATUS_URL:-http://localhost:${UI_HOST_PORT}/api/status}"
 V2V_CONTAINER="${V2V_CONTAINER:-lead-vanetza}"
-V2V_IFACE="${V2V_IFACE:-eth0}"
+V2V_IFACE="${V2V_IFACE:-eth1}"
 TOPIC_SAMPLE_RETRIES="${TOPIC_SAMPLE_RETRIES:-5}"
 
 sample_topic() {

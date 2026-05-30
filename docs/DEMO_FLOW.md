@@ -28,7 +28,7 @@
 - In `intersection-occlusion`, the lead should detect the pedestrian first and send CPM. Ego should stop on the east-west segment before turning south; ego and lead should resume only after the pedestrian is done crossing.
 
 ## Mild profile
-- Apply netem mild profile to V2V path.
+- Apply netem mild profile to the V2V ad-hoc interface (`eth1` by default).
 - Show slight delay growth, pending packets, and occasional stale/ghost model objects.
 
 ## Severe profile

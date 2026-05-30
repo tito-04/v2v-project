@@ -64,18 +64,18 @@ You can also set `SCENARIO_NAME` in `.env`, or set `SCENARIO_FILE` to a custom J
 - Apply mild impairment on lead station:
 
 ```bash
-./scripts/netem_profiles.sh apply mild lead-vanetza eth0
+./scripts/netem_profiles.sh apply mild lead-vanetza eth1
 ```
 
 - Isolate delay or loss:
 
 ```bash
-./scripts/netem_profiles.sh apply delay-only lead-vanetza eth0
-./scripts/netem_profiles.sh apply loss-only lead-vanetza eth0
+./scripts/netem_profiles.sh apply delay-only lead-vanetza eth1
+./scripts/netem_profiles.sh apply loss-only lead-vanetza eth1
 ```
 
 - Clear impairment:
 
 ```bash
-./scripts/netem_profiles.sh clear lead-vanetza eth0
+./scripts/netem_profiles.sh clear lead-vanetza eth1
 ```

@@ -57,7 +57,7 @@ services:
       - VANETZA_STATION_ID=${LEAD_STATION_ID:-101}
       - VANETZA_STATION_TYPE=5
       - VANETZA_MAC_ADDRESS=6e:06:e0:03:00:65
-      - VANETZA_INTERFACE=eth0
+      - VANETZA_INTERFACE=${V2V_IFACE:-eth1}
       - VANETZA_USE_HARDCODED_GPS=true
       - VANETZA_LATITUDE=${LEAD_LATITUDE:-40.628300}
       - VANETZA_LONGITUDE=${LEAD_LONGITUDE:--8.654400}
@@ -75,7 +75,10 @@ services:
       lead-broker:
         condition: service_healthy
     networks:
-      - mgmt_network
+      mgmt_network:
+        interface_name: eth0
+      v2v_adhoc:
+        interface_name: ${V2V_IFACE:-eth1}
 
   ego-vanetza:
     image: ghcr.io/nap-it/vanetza-nap:latest
@@ -87,7 +90,7 @@ services:
       - VANETZA_STATION_ID=${EGO_STATION_ID:-102}
       - VANETZA_STATION_TYPE=5
       - VANETZA_MAC_ADDRESS=6e:06:e0:03:00:66
-      - VANETZA_INTERFACE=eth0
+      - VANETZA_INTERFACE=${V2V_IFACE:-eth1}
       - VANETZA_USE_HARDCODED_GPS=true
       - VANETZA_LATITUDE=${EGO_LATITUDE:-40.628250}
       - VANETZA_LONGITUDE=${EGO_LONGITUDE:--8.654700}
@@ -104,7 +107,10 @@ services:
       ego-broker:
         condition: service_healthy
     networks:
-      - mgmt_network
+      mgmt_network:
+        interface_name: eth0
+      v2v_adhoc:
+        interface_name: ${V2V_IFACE:-eth1}
 
   world-generator:
     build:

@@ -94,6 +94,11 @@ if [[ -z "${mgmt_network_name}" ]]; then
   fail "mgmt_network name not resolved from compose config"
 fi
 
+v2v_network_name="$(jq -r '.networks.v2v_adhoc.name // empty' "${compose_json_file}")"
+if [[ -z "${v2v_network_name}" ]]; then
+  fail "v2v_adhoc network name not resolved from compose config"
+fi
+
 docker compose up -d --wait main-broker lead-broker ego-broker lead-vanetza ego-vanetza >/dev/null
 
 # Ensure each broker is actually connected to mgmt_network (healthcheck uses localhost
@@ -105,6 +110,14 @@ for broker_container in main-broker lead-broker ego-broker; do
       | grep -qw "${broker_container}"; then
     echo "preflight: ${broker_container} not on mgmt_network, recreating..."
     docker compose up -d --wait --force-recreate "${broker_container}" >/dev/null
+  fi
+done
+
+for vanetza_container in lead-vanetza ego-vanetza; do
+  if ! docker network inspect "${v2v_network_name}" \
+      --format '{{range .Containers}}{{.Name}} {{end}}' \
+      | grep -qw "${vanetza_container}"; then
+    fail "${vanetza_container} is not attached to v2v_adhoc"
   fi
 done
 

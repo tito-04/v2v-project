@@ -14,7 +14,7 @@ fi
 
 action="$1"
 default_container="${V2V_CONTAINER:-lead-vanetza}"
-default_iface="${V2V_IFACE:-eth0}"
+default_iface="${V2V_IFACE:-eth1}"
 
 apply_profile() {
   local profile="$1"

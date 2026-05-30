@@ -135,5 +135,6 @@ esac
 - **Risks of Severe Network Degradation:** During our `netem` latency or packet-loss testing, CPMs arrive out-of-order or with large lag spikes. This invalidates the Ego World Model's real-time accuracy. High delays cause stale detections that translate directly into delayed emergency braking sequences, proving that while V2V perception prevents blind collisions, it introduces a hard dependency on ultra low-latency QoS loops to perform physical real-time safety.
 
 ## Links
-- **Repository:** [INSERT_YOUR_GITHUB_OR_GITLAB_LINK_HERE]
-- **Video Demo:** [INSERT_YOUR_YOUTUBE_OR_DISCORD_VIDEO_LINK_HERE]
+- **Repository:** [https://github.com/tito-04/v2v-project]
+- **Video Demo:** [ https://drive.google.com/file/d/1zgbZbJz5wUn4CB1vrx11TtiuRGrkwmtr/view?usp=sharing
+                    https://drive.google.com/file/d/1LApid-zgD0b4B4RjaDSEJc8nilEduqlO/view?usp=drive_link]
